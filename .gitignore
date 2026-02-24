@@ -1,0 +1,41 @@
+__pycache__/
+*.pyc
+*.pyo
+dist/
+build/
+*.spec.bak
+*.egg-info/
+
+# PyInstaller temp
+*.manifest
+*.log
+
+# Env
+server/.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Config with tokens
+config.json
+
+# Debug artifacts
+debug_*.png
+debug_sell/
+
+# Database
+*.db
+*.db-shm
+*.db-wal
+
+# Claude Code
+.claude/
+
+# Supabase CLI temp
+supabase/.temp/
