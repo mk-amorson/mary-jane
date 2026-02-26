@@ -49,7 +49,7 @@ def play_click():
 
 # Interactive widget types that trigger click sound
 _CLICK_TYPES = (
-    QPushButton, QComboBox, QLineEdit,
+    QPushButton, QLineEdit,
 )
 
 
