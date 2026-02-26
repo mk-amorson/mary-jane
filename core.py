@@ -12,7 +12,7 @@ user32 = ctypes.windll.user32
 log = logging.getLogger(__name__)
 
 GAME_WINDOW_TITLE = "Majestic Multiplayer"
-SERVER_URL = "http://localhost:8000"  # TODO: update for production VPS
+SERVER_URL = "https://axiomatic-aryana-hillocky.ngrok-free.dev"
 
 
 def is_game_running():
@@ -125,6 +125,7 @@ class AppState:
         self.user_info: dict | None = None
         self.is_authenticated: bool = False
         self.server_url: str = SERVER_URL
+        self.bot_username: str = ""
         # Subscription
         self.subscription_manager = None  # SubscriptionManager, set from main.py
         # Queue OCR (toggle on queue page)

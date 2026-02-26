@@ -48,7 +48,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='MJPort',
+    name='Mary Jane',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -61,5 +61,6 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=None,
+    icon=os.path.join(ROOT, 'icons', 'app.ico'),
+    version=os.path.join(ROOT, 'version_info.txt'),
 )

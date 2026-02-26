@@ -98,42 +98,13 @@ class ApiClient:
     async def get_me(self) -> dict | None:
         return await self._request("GET", "/auth/me")
 
-    # ── Items ──────────────────────────────────────────────
-
-    async def get_items(
-        self, server: str | None = None, category: str | None = None,
-        search: str | None = None, page: int = 1,
-    ) -> dict | None:
-        params = {"page": page}
-        if server:
-            params["server"] = server
-        if category:
-            params["category"] = category
-        if search:
-            params["search"] = search
-        return await self._request("GET", "/items", params=params, auth=False)
-
-    # ── Prices ─────────────────────────────────────────────
-
-    async def submit_price(
-        self, item_id: int, server_name: str, price: int, source: str,
-    ) -> dict | None:
-        return await self._request("POST", "/prices", json={
-            "item_id": item_id,
-            "server_name": server_name,
-            "price": price,
-            "source": source,
-        })
-
-    async def get_price_latest(self, item_id: int, server: str) -> dict | None:
-        return await self._request(
-            "GET", f"/prices/{item_id}/latest", params={"server": server}, auth=False,
-        )
-
     # ── Modules ────────────────────────────────────────────
 
     async def get_modules(self) -> dict | None:
         return await self._request("GET", "/modules")
+
+    async def request_subscription(self, module_id: str) -> dict | None:
+        return await self._request("POST", f"/modules/{module_id}/subscribe")
 
     # ── Notifications ──────────────────────────────────────
 

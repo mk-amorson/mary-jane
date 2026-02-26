@@ -44,10 +44,19 @@ async def lifespan(app: FastAPI):
     set_dispatcher(dp, bot)
     notify_router.set_bot(bot)
 
+    # Resolve and cache bot username
+    bot_info = await bot.me()
+    app.state.bot = bot
+    app.state.bot_username = bot_info.username
+    log.info("Bot username: @%s", bot_info.username)
+
     # Set webhook (only for production HTTPS URLs)
     webhook_url = f"{settings.server_url}{settings.webhook_path}"
     if settings.server_url.startswith("https://"):
-        await bot.set_webhook(webhook_url)
+        await bot.set_webhook(
+            webhook_url,
+            allowed_updates=["message", "pre_checkout_query"],
+        )
         log.info("Webhook set: %s", webhook_url)
     else:
         log.warning("Skipping webhook setup (non-HTTPS URL: %s)", settings.server_url)

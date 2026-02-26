@@ -46,13 +46,22 @@ def detect_panel(frame_np):
 
     mx, my = ml[0], ml[1] + y_off
 
-    # find bar horizontal extent via bright tick marks (> 100)
+    # Find bar horizontal extent via bright tick marks (> 100).
+    # Verify each column has dark panel pixels below (square interiors < 60).
+    # This filters out bright game background during daytime while working
+    # at night (where background is dark but bar_row > 100 is only on ticks).
     bar_mid_y = my + tmpl_h // 2
     bar_row = gray[bar_mid_y, :]
-    bright = bar_row > 100
-    search_l = max(0, mx - 1000)
-    search_r = min(fw, mx + tmpl_w + 1000)
-    bp = np.where(bright[search_l:search_r])[0]
+    panel_count = np.zeros(fw, dtype=int)
+    n_check = 0
+    for cy in range(my + tmpl_h + 25, min(fh, my + tmpl_h + 80)):
+        panel_count += (gray[cy, :] < 50).astype(int)
+        n_check += 1
+    has_panel_below = panel_count >= max(3, n_check // 3)
+    confirmed = (bar_row > 100) & has_panel_below
+    search_l = max(0, mx - 800)
+    search_r = min(fw, mx + tmpl_w + 800)
+    bp = np.where(confirmed[search_l:search_r])[0]
     if len(bp) == 0:
         return None, None
     bp = bp + search_l
@@ -60,57 +69,37 @@ def detect_panel(frame_np):
     bar_rect = (bar_x1, my, bar_x2 - bar_x1, tmpl_h)
 
     # find square top border: scan below bar, skip first 20 rows (gap),
-    # find first row where mean brightness drops below 38 (dark interior)
+    # find first row where mean brightness drops below 45 (dark interior)
     sq_top = None
     for y in range(my + tmpl_h + 20, min(fh, my + tmpl_h + 120)):
         avg = float(np.mean(gray[y, bar_x1:bar_x2]))
-        if avg < 38:
+        if avg < 45:
             sq_top = y - 1  # border row is one above
             break
     if sq_top is None:
         return None, None
 
-    # horizontal profile 10px into dark interior to find individual squares
-    scan_y = min(sq_top + 10, fh - 1)
-    mid_row = gray[scan_y, :]
+    # find square bottom: scan down until row average rises (end of panel)
+    # skip first 40 rows to avoid false positives from item icons inside squares
+    sq_h = 80  # fallback
+    for y in range(sq_top + 40, min(fh, sq_top + 200)):
+        avg = float(np.mean(gray[y, bar_x1:bar_x2]))
+        if avg > 85:
+            sq_h = y - sq_top
+            break
 
-    # dark pixels (< 40) in bar vicinity = square interiors
-    is_dark = mid_row < 40
-    mask = np.zeros_like(is_dark)
-    mask[max(0, bar_x1 - 150):min(fw, bar_x2 + 150)] = True
-    is_dark = is_dark & mask
-
-    changes = np.diff(is_dark.astype(int))
-    enters = np.where(changes == 1)[0] + 1
-    exits = np.where(changes == -1)[0] + 1
-    if len(is_dark) > 0 and is_dark[0]:
-        enters = np.concatenate([[0], enters])
-    if len(is_dark) > 0 and is_dark[-1]:
-        exits = np.concatenate([exits, [len(is_dark)]])
-
-    sq_interiors = []
-    for s, e in zip(enters, exits):
-        w = e - s
-        if w > 50:
-            sq_interiors.append((int(s), int(w)))
-
-    if len(sq_interiors) < 5:
+    # generate evenly-spaced squares across bar extent
+    # squares are roughly square, use sq_h as approximate width
+    n_squares = max(1, round((bar_x2 - bar_x1) / sq_h))
+    if n_squares < 3:
         return None, None
-
-    # squares are roughly square: height ≈ median interior width + borders
-    widths = [w for _, w in sq_interiors]
-    sq_size = int(np.median(widths))
-    sq_h = sq_size + 2  # +2 for border pixels
-
+    step = (bar_x2 - bar_x1) / n_squares
     squares = []
-    for x, w in sq_interiors:
-        # include border (1px each side)
-        squares.append((x - 1, sq_top, w + 2, sq_h))
-
-    # constrain bar width to match squares extent exactly
-    sq_left = squares[0][0]
-    sq_right = squares[-1][0] + squares[-1][2]
-    bar_rect = (sq_left, my, sq_right - sq_left, tmpl_h)
+    for i in range(n_squares):
+        x = int(bar_x1 + i * step)
+        w = int(bar_x1 + (i + 1) * step) - x
+        squares.append((x, sq_top, w, sq_h))
+    bar_rect = (bar_x1, my, bar_x2 - bar_x1, tmpl_h)
 
     log.info("Panel found: %d squares, bar=%s", len(squares), bar_rect)
     return squares, bar_rect

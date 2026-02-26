@@ -3,10 +3,15 @@
 import json
 import logging
 import os
+import sys
 
 log = logging.getLogger(__name__)
 
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config.json")
+if getattr(sys, 'frozen', False):
+    _CONFIG_DIR = os.path.dirname(sys.executable)
+else:
+    _CONFIG_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CONFIG_PATH = os.path.join(_CONFIG_DIR, "config.json")
 
 
 class TokenStore:

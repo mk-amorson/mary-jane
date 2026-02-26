@@ -38,7 +38,7 @@ class RefreshRequest(BaseModel):
 @router.post("/telegram", response_model=TokenResponse)
 async def auth_telegram(body: TelegramAuthRequest):
     data = body.model_dump()
-    telegram_id = data.pop("id")
+    telegram_id = data["id"]
     if not validate_telegram_data(data):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid Telegram auth")
 
@@ -83,10 +83,8 @@ async def get_me(user: dict = Depends(get_current_user)):
 
 
 @router.get("/login-page", response_class=HTMLResponse)
-async def login_page(redirect: str):
-    settings = get_settings()
-    bot_username = settings.bot_token.split(":")[0]
-    # In production, resolve actual bot username via getMe; here we use ID as placeholder
+async def login_page(redirect: str, request: Request):
+    bot_username = getattr(request.app.state, "bot_username", "bot")
     html = f"""<!DOCTYPE html>
 <html><head>
 <meta charset="utf-8">
@@ -104,7 +102,7 @@ async def login_page(redirect: str):
 <div class="container">
   <h1>MJ Port — Войти через Telegram</h1>
   <script async src="https://telegram.org/js/telegram-widget.js?22"
-    data-telegram-login="MjPortBot"
+    data-telegram-login="{bot_username}"
     data-size="large"
     data-auth-url="{redirect}"
     data-request-access="write">

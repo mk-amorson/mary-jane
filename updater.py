@@ -2,23 +2,15 @@
 
 import os
 import sys
+import json
 import logging
-import tempfile
 import subprocess
-
-import aiohttp
+import urllib.request
+import urllib.error
 
 from version import __version__
 
 log = logging.getLogger(__name__)
-
-
-def _is_frozen() -> bool:
-    return getattr(sys, 'frozen', False)
-
-
-def _current_exe() -> str:
-    return sys.executable if _is_frozen() else ""
 
 
 def _parse_version(v: str) -> tuple[int, ...]:
@@ -33,40 +25,41 @@ def is_newer(remote: str, local: str) -> bool:
     return _parse_version(remote) > _parse_version(local)
 
 
-async def check_update(api_client) -> dict | None:
-    """GET /app/version → {version, download_url, ...} or None if up to date."""
-    try:
-        resp = await api_client.get_app_version()
-        if resp is None:
-            return None
-        remote_ver = resp.get("version")
-        if not remote_ver:
-            return None
-        if is_newer(remote_ver, __version__):
-            log.info("Update available: %s → %s", __version__, remote_ver)
-            return resp
+def check_update_sync(server_url: str) -> dict | None:
+    """GET /app/version (synchronous, 3s timeout).
+
+    Returns dict if newer version available, None if up to date.
+    Raises on network errors.
+    """
+    url = f"{server_url}/app/version"
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=3) as resp:
+        data = json.loads(resp.read().decode())
+    remote_ver = data.get("version")
+    if not remote_ver:
         return None
-    except Exception:
-        log.debug("Update check failed", exc_info=True)
-        return None
+    if is_newer(remote_ver, __version__):
+        log.info("Update available: %s → %s", __version__, remote_ver)
+        return data
+    return None
 
 
-async def download_update(url: str, dest: str, progress_cb=None) -> bool:
-    """Download file from url to dest. Returns True on success."""
+def download_update_sync(url: str, dest: str, progress_cb=None) -> bool:
+    """Download file from url to dest (synchronous). Returns True on success."""
     try:
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    log.error("Download failed: HTTP %d", resp.status)
-                    return False
-                total = resp.content_length or 0
-                downloaded = 0
-                with open(dest, 'wb') as f:
-                    async for chunk in resp.content.iter_chunked(64 * 1024):
-                        f.write(chunk)
-                        downloaded += len(chunk)
-                        if progress_cb and total > 0:
-                            progress_cb(downloaded / total)
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            total = int(resp.headers.get("Content-Length", 0))
+            downloaded = 0
+            with open(dest, 'wb') as f:
+                while True:
+                    chunk = resp.read(64 * 1024)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if progress_cb and total > 0:
+                        progress_cb(downloaded / total)
         log.info("Downloaded update to %s (%d bytes)", dest, downloaded)
         return True
     except Exception:
@@ -76,18 +69,20 @@ async def download_update(url: str, dest: str, progress_cb=None) -> bool:
 
 def apply_update(new_exe: str) -> None:
     """Write update.bat, launch it, exit current process."""
-    current = _current_exe()
-    if not current:
+    if not getattr(sys, 'frozen', False):
         log.error("Cannot apply update: not running as frozen .exe")
         return
 
+    current = sys.executable
     bat_content = (
         '@echo off\r\n'
-        'timeout /t 2 /nobreak >nul\r\n'
-        'del "%~1"\r\n'
-        'move "%~2" "%~1"\r\n'
+        ':wait\r\n'
+        'timeout /t 1 /nobreak >nul\r\n'
+        'del /Q "%~1" 2>nul\r\n'
+        'if exist "%~1" goto wait\r\n'
+        'move /Y "%~2" "%~1"\r\n'
         'start "" "%~1"\r\n'
-        'del "%~f0"\r\n'
+        'del /Q "%~f0"\r\n'
     )
 
     bat_path = os.path.join(os.path.dirname(current), "update.bat")

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import socket
+import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from threading import Thread
 from urllib.parse import parse_qs, urlparse
@@ -28,7 +29,7 @@ class LoginCallbackServer:
         self._server: HTTPServer | None = None
         self._thread: Thread | None = None
         self._result: dict | None = None
-        self._event = asyncio.Event()
+        self._event = threading.Event()
         self.port: int | None = None
 
     def start(self) -> int:
@@ -62,7 +63,7 @@ class LoginCallbackServer:
                 self.wfile.write(html.encode())
 
                 # Signal that we got the callback
-                asyncio.get_event_loop().call_soon_threadsafe(parent._event.set)
+                parent._event.set()
 
             def log_message(self, format, *args):
                 pass  # suppress HTTP logs
@@ -75,9 +76,10 @@ class LoginCallbackServer:
 
     async def wait_for_callback(self, timeout: float = 120.0) -> dict | None:
         try:
-            await asyncio.wait_for(self._event.wait(), timeout)
-            return self._result
-        except asyncio.TimeoutError:
+            loop = asyncio.get_running_loop()
+            got = await loop.run_in_executor(None, self._event.wait, timeout)
+            if got:
+                return self._result
             log.warning("Login callback timed out")
             return None
         finally:

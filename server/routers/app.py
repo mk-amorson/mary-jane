@@ -2,7 +2,7 @@ import time
 import logging
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 
 from ..config import get_settings
 
@@ -61,8 +61,8 @@ async def get_latest_release() -> dict | None:
 
 
 @router.get("/version")
-async def latest_version():
+async def latest_version(request: Request):
     rel = await get_latest_release()
-    if rel is None:
-        return {"version": None}
-    return rel
+    result = rel if rel else {"version": None}
+    result["bot_username"] = getattr(request.app.state, "bot_username", "")
+    return result

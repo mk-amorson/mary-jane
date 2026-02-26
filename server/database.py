@@ -137,11 +137,14 @@ async def create_subscription(
     stars_paid: int,
     transaction_id: str,
 ) -> dict:
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    expires = now + timedelta(days=days)
     rows = await _insert("subscriptions", {
         "user_id": user_id,
         "module_id": module_id,
-        "starts_at": "now()",
-        "expires_at": f"now() + interval '{days} days'",
+        "starts_at": now.isoformat(),
+        "expires_at": expires.isoformat(),
         "stars_paid": stars_paid,
         "transaction_id": transaction_id,
     })

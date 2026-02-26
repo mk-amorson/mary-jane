@@ -1,8 +1,8 @@
 import os
 
 from PyQt5.QtWidgets import QWidget, QPushButton, QHBoxLayout
-from PyQt5.QtCore import Qt, QRectF, pyqtSignal
-from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap
+from PyQt5.QtCore import Qt, QRectF, pyqtSignal, pyqtProperty, QPropertyAnimation, QPointF
+from PyQt5.QtGui import QPainter, QColor, QPen, QPixmap, QTransform
 from PyQt5.QtSvg import QSvgRenderer
 
 from utils import resource_path
@@ -66,6 +66,68 @@ class IconWidget(QWidget):
                 p2.fillRect(0, 0, w, h, color)
                 p2.end()
                 painter.drawPixmap(0, 0, pix)
+
+        painter.end()
+
+
+class SpinningIconWidget(IconWidget):
+    """IconWidget with optional spinning animation (for update status)."""
+
+    def __init__(self, icon_type, parent=None):
+        super().__init__(icon_type, parent)
+        self._angle = 0.0
+        self._spinning = False
+
+        self._anim = QPropertyAnimation(self, b"rotation")
+        self._anim.setStartValue(0.0)
+        self._anim.setEndValue(360.0)
+        self._anim.setDuration(1200)
+        self._anim.setLoopCount(-1)
+
+    def _get_rotation(self):
+        return self._angle
+
+    def _set_rotation(self, val):
+        self._angle = val
+        self.update()
+
+    rotation = pyqtProperty(float, _get_rotation, _set_rotation)
+
+    def start_spin(self):
+        if not self._spinning:
+            self._spinning = True
+            self._anim.start()
+
+    def stop_spin(self):
+        if self._spinning:
+            self._spinning = False
+            self._anim.stop()
+            self._angle = 0.0
+            self.update()
+
+    def paintEvent(self, event):
+        if not self._spinning:
+            super().paintEvent(event)
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        cx, cy = self.width() / 2, self.height() / 2
+        painter.translate(cx, cy)
+        painter.rotate(self._angle)
+        painter.translate(-cx, -cy)
+
+        w, h = self.width(), self.height()
+        color = self._color or self.ICON_COLOR
+        renderer = _svg(self.icon_type)
+        if renderer and renderer.isValid():
+            pix = QPixmap(w, h)
+            pix.fill(Qt.transparent)
+            p2 = QPainter(pix)
+            renderer.render(p2, QRectF(0, 0, w, h))
+            p2.setCompositionMode(QPainter.CompositionMode_SourceIn)
+            p2.fillRect(0, 0, w, h, color)
+            p2.end()
+            painter.drawPixmap(0, 0, pix)
 
         painter.end()
 

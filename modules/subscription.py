@@ -16,6 +16,7 @@ class SubscriptionManager:
     def __init__(self, state):
         self._state = state
         self._cache: dict[str, bool] = {}
+        self._expires: dict[str, str] = {}  # module_id -> expires_at ISO
         self._cache_time: float = 0.0
         self._modules_data: list[dict] | None = None
 
@@ -56,10 +57,19 @@ class SubscriptionManager:
                     m["id"]: m.get("has_access", m.get("is_free", False))
                     for m in result["modules"]
                 }
+                self._expires = {
+                    m["id"]: m["expires_at"]
+                    for m in result["modules"]
+                    if m.get("expires_at")
+                }
                 self._cache_time = time.monotonic()
                 log.info("Subscription cache refreshed: %s", self._cache)
         except Exception:
             log.exception("Failed to refresh subscriptions")
+
+    def get_expires(self, module_id: str) -> str | None:
+        """Return ISO expires_at string for a paid module, or None."""
+        return self._expires.get(module_id)
 
     @property
     def modules(self) -> list[dict]:
