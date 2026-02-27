@@ -28,6 +28,7 @@ a = Analysis(
         'win32gui',
         'win32api',
         'win32con',
+        'pymem',
     ],
     hookspath=[],
     hooksconfig={},

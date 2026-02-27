@@ -9,7 +9,7 @@ from core import AppState, SERVER_URL
 from auth.token_store import TokenStore
 from api_client import ApiClient
 from modules.queue_monitor import queue_monitor_loop
-from modules.fishing import fishing_bot_loop
+from modules.fishing import fishing2_bot_loop
 from modules.subscription import SubscriptionManager
 from ui.window import MainWindow
 
@@ -17,6 +17,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
+# Fishing debug logs — shows timings for every detection + action
+logging.getLogger("modules.fishing").setLevel(logging.DEBUG)
 log = logging.getLogger(__name__)
 
 
@@ -74,7 +76,7 @@ def run_async_loop(state):
 
     loop.create_task(_fetch_bot_username(state))
     loop.create_task(queue_monitor_loop(state))
-    loop.create_task(fishing_bot_loop(state))
+    loop.create_task(fishing2_bot_loop(state))
     loop.create_task(auth_check_loop(state))
     loop.run_forever()
 

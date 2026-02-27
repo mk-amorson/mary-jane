@@ -155,7 +155,7 @@ async def queue_monitor_loop(state):
                 _reset_ocr(state)
                 notified = False
             # stop WGC capture when not needed
-            if state.frame_provider.running and not state.fishing_active:
+            if state.frame_provider.running and not state.fishing_active and not state.fishing2_active:
                 state.frame_provider.stop()
             continue
 

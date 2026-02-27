@@ -38,6 +38,7 @@ class GameFrameProvider:
         self._lock = threading.Lock()
         self._running = False
         self._control: CaptureControl | None = None
+        self._gen = 0
 
     @property
     def running(self):
@@ -46,8 +47,18 @@ class GameFrameProvider:
     def start(self):
         if self._running:
             return
+        # Stop lingering capture from previous session
+        if self._control:
+            try:
+                self._control.stop()
+            except Exception:
+                pass
+            self._control = None
+
+        self._gen += 1
+        gen = self._gen
         self._running = True
-        log.info("GameFrameProvider starting for '%s'", self._window_name)
+        log.info("GameFrameProvider starting (gen=%d)", gen)
 
         provider = self
 
@@ -59,16 +70,21 @@ class GameFrameProvider:
 
         @capture.event
         def on_frame_arrived(frame: Frame, capture_control: InternalCaptureControl):
+            if provider._gen != gen:
+                return
             arr = frame.frame_buffer.copy()
             with provider._lock:
                 provider._frame = arr
 
         @capture.event
         def on_closed():
+            if provider._gen != gen:
+                log.debug("Ignoring stale on_closed (gen=%d, current=%d)", gen, provider._gen)
+                return
             provider._running = False
             provider._frame = None
             provider._control = None
-            log.info("GameFrameProvider stopped")
+            log.info("GameFrameProvider stopped (gen=%d)", gen)
 
         try:
             self._control = capture.start_free_threaded()
@@ -138,6 +154,8 @@ class AppState:
         self.ocr_text_region: tuple | None = None
         self.ocr_number_region: tuple | None = None
         self.ocr_text_locked: bool = False
+        # Stash
+        self.stash_active: bool = False
         # WGC frame provider (single capture module)
         self.frame_provider: GameFrameProvider = GameFrameProvider(GAME_WINDOW_TITLE)
         # Fishing bot
@@ -155,6 +173,22 @@ class AppState:
         self.fishing_take_icon: tuple | None = None  # take icon match
         self.fishing_take_pause: float = 0.0         # monotonic time until pause ends
         self.fishing_bounds = None                     # SquareBounds | None, cached
+        # Fishing v2
+        self.fishing2_active: bool = False
+        self.fishing2_step: str = "idle"              # idle / cast / strike / reel / end
+        self.fishing2_bar_rect: tuple | None = None
+        self.fishing2_green_zone: tuple | None = None
+        self.fishing2_slider_x: int | None = None
+        self.fishing2_bobber_rect: tuple | None = None
+        self.fishing2_bubbles: bool = False
+        self.fishing2_camera_dir: str | None = None
+        self.fishing2_take_icon: tuple | None = None
+        self.fishing2_take_pause: float = 0.0
+        self.fishing2_pred_x: int | None = None
+        self.fishing2_slider_bounds: tuple | None = None  # (left, right)
+        self.fishing2_pred_time: float = 0.12
+        self.fishing2_debug: bool = False
+        self.fishing2_calibrated: bool = False
         # Queue ETA (EMA-based)
         self.queue_eta_seconds: float | None = None
         self.queue_progress: float = 0.0

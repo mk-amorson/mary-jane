@@ -10,6 +10,7 @@ from utils import resource_path
 _ICONS_DIR = resource_path("icons")
 
 _renderers: dict[str, QSvgRenderer] = {}
+_pixmaps: dict[str, QPixmap] = {}
 
 
 def _svg(name: str) -> QSvgRenderer | None:
@@ -20,6 +21,16 @@ def _svg(name: str) -> QSvgRenderer | None:
         else:
             _renderers[name] = None
     return _renderers[name]
+
+
+def _png(name: str) -> QPixmap | None:
+    if name not in _pixmaps:
+        path = os.path.join(_ICONS_DIR, f"{name}.png")
+        if os.path.isfile(path):
+            _pixmaps[name] = QPixmap(path)
+        else:
+            _pixmaps[name] = None
+    return _pixmaps[name]
 
 
 class IconWidget(QWidget):
@@ -66,6 +77,18 @@ class IconWidget(QWidget):
                 p2.fillRect(0, 0, w, h, color)
                 p2.end()
                 painter.drawPixmap(0, 0, pix)
+            else:
+                src = _png(self.icon_type)
+                if src and not src.isNull():
+                    scaled = src.scaled(w, h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                    pix = QPixmap(w, h)
+                    pix.fill(Qt.transparent)
+                    p2 = QPainter(pix)
+                    p2.drawPixmap((w - scaled.width()) // 2, (h - scaled.height()) // 2, scaled)
+                    p2.setCompositionMode(QPainter.CompositionMode_SourceIn)
+                    p2.fillRect(0, 0, w, h, color)
+                    p2.end()
+                    painter.drawPixmap(0, 0, pix)
 
         painter.end()
 

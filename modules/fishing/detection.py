@@ -9,22 +9,20 @@ from utils import resource_path
 log = logging.getLogger(__name__)
 
 _REF_DIR = resource_path("reference")
-SPACE_TMPL = cv2.imread(os.path.join(_REF_DIR, "space.bmp"), cv2.IMREAD_GRAYSCALE)
 BOBBER_TMPL = cv2.imread(os.path.join(_REF_DIR, "bobber.png"), cv2.IMREAD_GRAYSCALE)
-AD_TMPL = cv2.imread(os.path.join(_REF_DIR, "a-d.png"), cv2.IMREAD_GRAYSCALE)
 TAKE_TMPL = cv2.imread(os.path.join(_REF_DIR, "take.png"), cv2.IMREAD_GRAYSCALE)
-BAR_TMPL = cv2.imread(os.path.join(_REF_DIR, "space_bar.png"), cv2.IMREAD_GRAYSCALE)
+GREEN_BAR_TMPL = cv2.imread(os.path.join(_REF_DIR, "green_bar.png"), cv2.IMREAD_GRAYSCALE)
 
 
 def detect_panel(frame_np):
-    """Detect fishing panel: slider bar + squares below it.
+    """Detect fishing panel via full_throw_bar.png template match.
 
-    Uses space_bar.png template to anchor on the ruler bar, then finds
-    squares below by scanning dark interiors in the horizontal profile.
+    Lower threshold (0.55) because the green zone shifts between frames.
+    Searches bottom half of the screen only.
 
     Returns (squares, bar_rect) or (None, None).
     squares: list of (x, y, w, h) for each inventory square.
-    bar_rect: (x, y, w, h) of the ruler/slider bar.
+    bar_rect: (x, y, w, h) of the slider bar.
     """
     if BAR_TMPL is None:
         return None, None
@@ -41,67 +39,54 @@ def detect_panel(frame_np):
 
     res = cv2.matchTemplate(crop, BAR_TMPL, cv2.TM_CCOEFF_NORMED)
     _, mv, _, ml = cv2.minMaxLoc(res)
-    if mv < 0.7:
+    if mv < 0.55:
         return None, None
 
-    mx, my = ml[0], ml[1] + y_off
+    bar_x = ml[0]
+    bar_y = ml[1] + y_off
+    bar_rect = (bar_x, bar_y, tmpl_w, tmpl_h)
 
-    # Find bar horizontal extent via bright tick marks (> 100).
-    # Verify each column has dark panel pixels below (square interiors < 60).
-    # This filters out bright game background during daytime while working
-    # at night (where background is dark but bar_row > 100 is only on ticks).
-    bar_mid_y = my + tmpl_h // 2
-    bar_row = gray[bar_mid_y, :]
-    panel_count = np.zeros(fw, dtype=int)
-    n_check = 0
-    for cy in range(my + tmpl_h + 25, min(fh, my + tmpl_h + 80)):
-        panel_count += (gray[cy, :] < 50).astype(int)
-        n_check += 1
-    has_panel_below = panel_count >= max(3, n_check // 3)
-    confirmed = (bar_row > 100) & has_panel_below
-    search_l = max(0, mx - 800)
-    search_r = min(fw, mx + tmpl_w + 800)
-    bp = np.where(confirmed[search_l:search_r])[0]
-    if len(bp) == 0:
-        return None, None
-    bp = bp + search_l
-    bar_x1, bar_x2 = int(bp[0]), int(bp[-1])
-    bar_rect = (bar_x1, my, bar_x2 - bar_x1, tmpl_h)
+    # ── Find squares below bar ──
+    # Use horizontal edge detection (Sobel) to find top border of squares
+    sq_search = gray[bar_y + tmpl_h + 10:min(fh, bar_y + tmpl_h + 120),
+                     bar_x:bar_x + tmpl_w]
+    if sq_search.size == 0:
+        log.info("Bar found at %s (score=%.2f), no squares", bar_rect, mv)
+        return [], bar_rect
 
-    # find square top border: scan below bar, skip first 20 rows (gap),
-    # find first row where mean brightness drops below 45 (dark interior)
+    edges_h = np.abs(cv2.Sobel(sq_search, cv2.CV_64F, 0, 1, ksize=3))
+    row_profile = np.mean(edges_h, axis=1)
+    mean_e = float(np.mean(row_profile))
+    std_e = float(np.std(row_profile))
     sq_top = None
-    for y in range(my + tmpl_h + 20, min(fh, my + tmpl_h + 120)):
-        avg = float(np.mean(gray[y, bar_x1:bar_x2]))
-        if avg < 45:
-            sq_top = y - 1  # border row is one above
+    for i in range(len(row_profile)):
+        if row_profile[i] > mean_e + 2 * std_e:
+            sq_top = bar_y + tmpl_h + 10 + i
             break
     if sq_top is None:
-        return None, None
+        log.info("Bar found at %s (score=%.2f), no squares", bar_rect, mv)
+        return [], bar_rect
 
-    # find square bottom: scan down until row average rises (end of panel)
-    # skip first 40 rows to avoid false positives from item icons inside squares
-    sq_h = 80  # fallback
+    # find square bottom (brightness jump back up)
+    sq_h = 80
     for y in range(sq_top + 40, min(fh, sq_top + 200)):
-        avg = float(np.mean(gray[y, bar_x1:bar_x2]))
-        if avg > 85:
+        avg = float(np.mean(gray[y, bar_x:bar_x + tmpl_w]))
+        if avg > 100:
             sq_h = y - sq_top
             break
 
-    # generate evenly-spaced squares across bar extent
-    # squares are roughly square, use sq_h as approximate width
-    n_squares = max(1, round((bar_x2 - bar_x1) / sq_h))
+    # generate evenly-spaced squares
+    n_squares = max(1, round(tmpl_w / sq_h))
     if n_squares < 3:
         return None, None
-    step = (bar_x2 - bar_x1) / n_squares
+    step = tmpl_w / n_squares
     squares = []
     for i in range(n_squares):
-        x = int(bar_x1 + i * step)
-        w = int(bar_x1 + (i + 1) * step) - x
+        x = int(bar_x + i * step)
+        w = int(bar_x + (i + 1) * step) - x
         squares.append((x, sq_top, w, sq_h))
-    bar_rect = (bar_x1, my, bar_x2 - bar_x1, tmpl_h)
 
-    log.info("Panel found: %d squares, bar=%s", len(squares), bar_rect)
+    log.info("Panel found: %d squares, bar=%s (score=%.2f)", len(squares), bar_rect, mv)
     return squares, bar_rect
 
 
@@ -213,7 +198,7 @@ def track_green(frame_np, bar):
     if crop.size == 0:
         return None
     hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
-    mask = cv2.inRange(hsv, (35, 50, 50), (85, 255, 255))
+    mask = cv2.inRange(hsv, (35, 50, 85), (85, 255, 255))
     gp = np.where(mask > 0)
     if len(gp[0]) == 0:
         return None
@@ -234,3 +219,20 @@ def track_slider(frame_np, bar):
     if len(cols[1]) == 0:
         return None
     return bx + int(np.mean(cols[1]))
+
+
+def track_slider_bounds(frame_np, bar):
+    """Track white slider with bounds. Returns (center, left, right) or None."""
+    bx, by, bw, bh = bar
+    crop = frame_np[by:by + bh, bx:bx + bw]
+    if crop.size == 0:
+        return None
+    hsv = cv2.cvtColor(crop, cv2.COLOR_RGB2HSV)
+    mask = cv2.inRange(hsv, (0, 0, 200), (180, 50, 255))
+    cols = np.where(mask > 0)
+    if len(cols[1]) == 0:
+        return None
+    left = bx + int(cols[1].min())
+    right = bx + int(cols[1].max())
+    center = bx + int(np.mean(cols[1]))
+    return center, left, right

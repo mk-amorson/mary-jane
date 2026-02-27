@@ -19,8 +19,12 @@ class SquareBounds:
 
 
 def icon_region(bounds: SquareBounds, fh: int) -> tuple[int, int, int, int]:
-    """Region below squares for space/a-d icon detection."""
-    return (bounds.left, bounds.bot, bounds.right, fh)
+    """Region below squares for space/a-d icon detection.
+
+    Starts a bit above the square bottom (icons can overlap) and extends
+    to the bottom of the screen.
+    """
+    return (bounds.left, max(0, bounds.bot - bounds.h // 4), bounds.right, fh)
 
 
 def bobber_region(bounds: SquareBounds, fw: int, fh: int) -> tuple[int, int, int, int]:

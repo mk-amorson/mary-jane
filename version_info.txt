@@ -1,7 +1,7 @@
 VSVersionInfo(
   ffi=FixedFileInfo(
-    filevers=(1, 2, 6, 0),
-    prodvers=(1, 2, 6, 0),
+    filevers=(1, 0, 2, 0),
+    prodvers=(1, 0, 2, 0),
     mask=0x3f,
     flags=0x0,
     OS=0x40004,
@@ -17,11 +17,11 @@ VSVersionInfo(
           [
             StringStruct('CompanyName', 'MJ Port'),
             StringStruct('FileDescription', 'Mary Jane - Majestic Multiplayer Helper'),
-            StringStruct('FileVersion', '1.2.6'),
+            StringStruct('FileVersion', '1.0.2'),
             StringStruct('InternalName', 'MaryJane'),
             StringStruct('OriginalFilename', 'Mary Jane.exe'),
             StringStruct('ProductName', 'Mary Jane'),
-            StringStruct('ProductVersion', '1.2.6'),
+            StringStruct('ProductVersion', '1.0.2'),
           ]
         )
       ]

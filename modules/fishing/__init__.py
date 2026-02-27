@@ -1,1 +1,1 @@
-from .loop import fishing_bot_loop
+from .loop import fishing2_bot_loop

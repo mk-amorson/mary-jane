@@ -27,7 +27,10 @@ config.json
 
 # Debug artifacts
 debug_*.png
+_debug_*.png
 debug_sell/
+mem_*.py
+start_*.bat
 
 # Database
 *.db
