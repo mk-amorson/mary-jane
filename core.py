@@ -12,7 +12,24 @@ user32 = ctypes.windll.user32
 log = logging.getLogger(__name__)
 
 GAME_WINDOW_TITLE = "Majestic Multiplayer"
-SERVER_URL = "https://axiomatic-aryana-hillocky.ngrok-free.dev"
+_DEFAULT_SERVER_URL = "http://localhost:8000"
+
+
+def _load_server_url() -> str:
+    import json, os, sys
+    if getattr(sys, 'frozen', False):
+        cfg_dir = os.path.dirname(sys.executable)
+    else:
+        cfg_dir = os.path.dirname(os.path.abspath(__file__))
+    cfg_path = os.path.join(cfg_dir, "config.json")
+    try:
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            return json.load(f).get("server_url", _DEFAULT_SERVER_URL)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return _DEFAULT_SERVER_URL
+
+
+SERVER_URL = _load_server_url()
 
 
 def is_game_running():
@@ -158,21 +175,6 @@ class AppState:
         self.stash_active: bool = False
         # WGC frame provider (single capture module)
         self.frame_provider: GameFrameProvider = GameFrameProvider(GAME_WINDOW_TITLE)
-        # Fishing bot
-        self.fishing_active: bool = False
-        self.fishing_step: str = "idle"              # idle / init / cast / strike / reel / take
-        self.fishing_squares: list | None = None     # locked once
-        self.fishing_bar_rect: tuple | None = None   # locked slider bar
-        self.fishing_green_zone: tuple | None = None # per-frame
-        self.fishing_slider_x: int | None = None     # per-frame
-        self.fishing_space_icon: tuple | None = None  # space icon match
-        self.fishing_bobber_rect: tuple | None = None # gray square around bobber
-        self.fishing_bubbles: bool = False
-        self.fishing_ad_icon: tuple | None = None    # a-d icon match
-        self.fishing_camera_dir: str | None = None   # left / right
-        self.fishing_take_icon: tuple | None = None  # take icon match
-        self.fishing_take_pause: float = 0.0         # monotonic time until pause ends
-        self.fishing_bounds = None                     # SquareBounds | None, cached
         # Fishing v2
         self.fishing2_active: bool = False
         self.fishing2_step: str = "idle"              # idle / cast / strike / reel / end
@@ -196,24 +198,15 @@ class AppState:
         self.queue_rate: float = 0.0
         self.queue_prev_pos: int | None = None
         self.queue_prev_time: float = 0.0
-        # Sell automation
-        self.sell_active: bool = False
-        self.sell_items: list = []        # [(item_id, name, qty), ...]
-        self.sell_offset: int = 1
-        self.sell_step: str = ""         # current step text for UI
-        # Sell overlay visualization
-        self.sell_match_rect: tuple | None = None   # (x, y, w, h) of last template match
-        self.sell_match_name: str = ""               # template name for color coding
-        self.sell_item_click: tuple | None = None    # (x, y) where item name was clicked
-        # Marketplace
-        self.marketplace_parsing: bool = False
-        self.marketplace_total: int = 0
-        self.marketplace_done: int = 0
-        self.marketplace_error: str | None = None
-        self.marketplace_start_time: float = 0.0
-        # Price scan automation
-        self.scan_active: bool = False
-        self.scan_items: list = []     # [(item_id, name), ...]
-        self.scan_step: str = ""       # current step text for UI
-        # Server (for prices)
-        self.current_server: str = "New York"
+        # Markers (memory-based)
+        self.markers_active: bool = False
+        self.markers_pos: tuple | None = None       # (x, y, z)
+        self.markers_yaw: float | None = None       # entity heading (for arrow)
+        self.markers_pitch: float | None = None     # entity pitch (None for now)
+        self.markers_cam_yaw: float | None = None   # camera yaw (for labels)
+        self.markers_cam_pitch: float | None = None # camera pitch (for labels)
+        self.markers_cam_pos: tuple | None = None   # (x,y,z) camera position from viewport+0x100
+        self.markers_cam_right: tuple | None = None # (x,y,z) camera right from viewport+0x50
+        self.markers_cam_fwd: tuple | None = None   # (x,y,z) camera forward from viewport+0x60
+        self.markers_cam_up: tuple | None = None    # (x,y,z) camera up from viewport+0x70
+        self.markers_target: tuple | None = None    # (x, y, z) saved marker

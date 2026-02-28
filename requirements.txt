@@ -1,0 +1,9 @@
+PyQt5>=5.15.11
+aiohttp>=3.13.0
+Pillow>=12.0.0
+opencv-python>=4.13.0
+numpy>=2.4.0
+pytesseract>=0.3.13
+pymem>=1.14.0
+windows-capture>=1.5.0
+pywin32>=311

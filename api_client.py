@@ -1,5 +1,6 @@
 """Central HTTP client for server communication. JWT auth with auto-refresh."""
 
+import asyncio
 import logging
 
 import aiohttp
@@ -14,6 +15,7 @@ class ApiClient:
         self._base = server_url.rstrip("/")
         self._tokens = token_store
         self._session: aiohttp.ClientSession | None = None
+        self._refresh_lock = asyncio.Lock()
 
     async def _ensure_session(self):
         if self._session is None or self._session.closed:
@@ -63,19 +65,20 @@ class ApiClient:
             return None
 
     async def _refresh(self) -> bool:
-        await self._ensure_session()
-        try:
-            async with self._session.post(
-                f"{self._base}/auth/refresh",
-                json={"refresh_token": self._tokens.refresh_token},
-            ) as resp:
-                if resp.status != 200:
-                    return False
-                data = await resp.json()
-                self._tokens.save(data["access_token"], data["refresh_token"])
-                return True
-        except aiohttp.ClientError:
-            return False
+        async with self._refresh_lock:
+            await self._ensure_session()
+            try:
+                async with self._session.post(
+                    f"{self._base}/auth/refresh",
+                    json={"refresh_token": self._tokens.refresh_token},
+                ) as resp:
+                    if resp.status != 200:
+                        return False
+                    data = await resp.json()
+                    self._tokens.save(data["access_token"], data["refresh_token"])
+                    return True
+            except aiohttp.ClientError:
+                return False
 
     # ── Auth ───────────────────────────────────────────────
 

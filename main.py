@@ -11,6 +11,7 @@ from api_client import ApiClient
 from modules.queue_monitor import queue_monitor_loop
 from modules.fishing import fishing2_bot_loop
 from modules.subscription import SubscriptionManager
+from modules.markers import markers_loop
 from ui.window import MainWindow
 
 logging.basicConfig(
@@ -78,6 +79,7 @@ def run_async_loop(state):
     loop.create_task(queue_monitor_loop(state))
     loop.create_task(fishing2_bot_loop(state))
     loop.create_task(auth_check_loop(state))
+    loop.create_task(markers_loop(state))
     loop.run_forever()
 
 

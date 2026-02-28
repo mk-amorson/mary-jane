@@ -146,6 +146,7 @@ def _beep_triple():
 async def queue_monitor_loop(state):
     log.info("Queue monitor loop started")
     notified = False
+    _prev_game_rect = None
 
     while True:
         await asyncio.sleep(POLL_INTERVAL)
@@ -154,8 +155,9 @@ async def queue_monitor_loop(state):
             if state.ocr_text_locked:
                 _reset_ocr(state)
                 notified = False
+                _prev_game_rect = None
             # stop WGC capture when not needed
-            if state.frame_provider.running and not state.fishing_active and not state.fishing2_active:
+            if state.frame_provider.running and not state.fishing2_active:
                 state.frame_provider.stop()
             continue
 
@@ -165,6 +167,13 @@ async def queue_monitor_loop(state):
 
         try:
             state.game_rect = get_game_rect()
+
+            # Reset OCR region if game window moved/resized
+            if state.ocr_text_locked and state.game_rect != _prev_game_rect and _prev_game_rect is not None:
+                log.info("Game rect changed %s → %s, resetting OCR", _prev_game_rect, state.game_rect)
+                _reset_ocr(state)
+                notified = False
+            _prev_game_rect = state.game_rect
             img = state.frame_provider.get_image()
             if img is None:
                 state.queue_position = None

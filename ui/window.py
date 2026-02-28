@@ -1,10 +1,13 @@
+"""MainWindow — the main application window."""
+
 import os
 import sys
+import math
 import ctypes
 import logging
 import threading
 import time as _time
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
 
 import asyncio
 
@@ -12,596 +15,44 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QApplication, QStackedWidget, QLineEdit, QSlider,
 )
-from PyQt5.QtCore import (
-    Qt, QTimer, QRectF, QUrl, pyqtSignal, QObject, QEvent,
-)
-from PyQt5.QtGui import (
-    QPainter, QColor, QPen, QFont, QFontDatabase,
-)
-from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 
-from core import is_game_running
-from utils import resource_path
+from core import is_game_running, get_game_rect
+from ui.styles import (
+    load_fonts, app_font, pixel_font,
+    COLOR_RED, COLOR_YELLOW, COLOR_GREEN,
+    button_style, input_style, gated_border_style,
+    _font_families,
+)
+from ui.sounds import init_click_sound, play_click, ClickSoundFilter
 from ui.widgets import IconWidget, SpinningIconWidget, TitleButton, ToggleSwitch
+from ui.overlay import OverlayWindow
+from ui.stash import STASHES, StashTimerWidget, StashFloatWindow
+from ui.markers import MarkerArrowOverlay, MarkerWorldOverlay, w2s
+from ui.queue import QueueETAWidget
+from ui.footer import FooterBar
 
-# ── Click Sound ──
+log = logging.getLogger(__name__)
 
-_SOUND_DIR = resource_path("sounds")
-_CLICK_SOUND = os.path.join(_SOUND_DIR, "click.mp3")
-_click_player: QMediaPlayer | None = None
-
-
-def _init_click_sound():
-    global _click_player
-    if _click_player is not None:
-        return
-    _click_player = QMediaPlayer()
-    _click_player.setVolume(70)
-
-
-def play_click():
-    if _click_player is None:
-        _init_click_sound()
-    _click_player.stop()
-    _click_player.setMedia(QMediaContent(QUrl.fromLocalFile(_CLICK_SOUND)))
-    _click_player.play()
-
-
-# Interactive widget types that trigger click sound
-_CLICK_TYPES = (
-    QPushButton, QLineEdit,
-)
-
-
-class _ClickSoundFilter(QObject):
-    """App-wide event filter that plays click sound on interactive widgets."""
-
-    def eventFilter(self, obj, event):
-        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
-            if isinstance(obj, _CLICK_TYPES):
-                play_click()
-            elif type(obj).__name__ in ("ToggleSwitch", "TitleButton"):
-                play_click()
-        return False
-
-
-# ── Fonts ──
-
-_FONT_DIR = resource_path("fonts")
-_FONTS = {
-    "app":   os.path.join(_FONT_DIR, "GTA Russian.ttf"),
-    "pixel": os.path.join(_FONT_DIR, "web_ibm_mda.ttf"),
-}
-_font_families: dict[str, str | None] = {"app": None, "pixel": None}
-
-
-def _load_fonts():
-    for key, path in _FONTS.items():
-        if os.path.isfile(path) and _font_families[key] is None:
-            fid = QFontDatabase.addApplicationFont(path)
-            if fid >= 0:
-                fams = QFontDatabase.applicationFontFamilies(fid)
-                if fams:
-                    _font_families[key] = fams[0]
-
-
-def _make_font(key: str, size: int) -> QFont:
-    family = _font_families.get(key)
-    f = QFont(family) if family else QFont("Consolas" if key == "pixel" else "")
-    f.setPixelSize(size)
-    return f
-
-
-def app_font(size: int) -> QFont:
-    return _make_font("app", size)
-
-
-def pixel_font(size: int) -> QFont:
-    return _make_font("pixel", size)
-
-
-# ── Colors ──
-
-COLOR_RED    = QColor(200, 70, 70)
-COLOR_YELLOW = QColor(220, 180, 50)
-COLOR_GREEN  = QColor(80, 200, 80)
-
-# ── Win32 constants ──
-
-_GWL_EXSTYLE      = -20
-_WS_EX_LAYERED    = 0x80000
-_WS_EX_TRANSPARENT = 0x20
-_WS_EX_TOOLWINDOW = 0x80
-_CLICK_THROUGH    = _WS_EX_LAYERED | _WS_EX_TRANSPARENT | _WS_EX_TOOLWINDOW
-
-# ── Stash schedules (Moscow time) ──
-
-_MSK = timezone(timedelta(hours=3))
-_DAY = 86400
-
-STASHES = [
-    ("gear",    [1,3,5,7,9,11,13,15,17,19,21,23], 15, 20),   # Mechanical
-    ("flask",   [1,3,5,7,9,11,13,15,17,19,21,23], 30, 20),   # Chemical
-    ("factory", [1,3,5,7,9,11,13,15,17,19,21,23], 45, 20),   # Industrial
-    ("warning", [2,6,10,14,18,22],                  0,  5),   # Danger zone
-]
-
-# ── Cached stylesheets ──
-
-_btn_css = None
-_input_css = None
-
-
-def _button_style():
-    global _btn_css
-    if _btn_css is None:
-        ff = f"font-family: '{_font_families['app']}';" if _font_families["app"] else ""
-        _btn_css = f"""
-            QPushButton {{
-                background: rgb(32,32,38); color: rgb(240,240,240);
-                border: 1px solid rgba(255,255,255,20); border-radius: 5px;
-                padding: 5px; font-size: 27px; {ff}
-            }}
-            QPushButton:hover {{ background: rgb(44,44,52); }}
-        """
-    return _btn_css
-
-
-def _input_style():
-    global _input_css
-    if _input_css is None:
-        ff = f"font-family: '{_font_families['app']}';" if _font_families["app"] else ""
-        _input_css = f"""
-            QLineEdit {{
-                background: rgb(32,32,38); color: rgb(240,240,240);
-                border: 1px solid rgba(255,255,255,20); border-radius: 5px;
-                padding: 3px; font-size: 27px; {ff}
-            }}
-            QLineEdit:disabled {{
-                color: rgb(120,120,120); background: rgb(28,28,34);
-            }}
-        """
-    return _input_css
-
-
-# ── Stash helpers ──
-
-def _stash_status(hours, open_min, dur_min):
-    now = datetime.now(_MSK)
-    cur = now.hour * 3600 + now.minute * 60 + now.second
-
-    for h in hours:
-        o = h * 3600 + open_min * 60
-        c = o + dur_min * 60
-        if c > _DAY:
-            cw = c - _DAY
-            if cur >= o:
-                return True, (_DAY - cur) + cw
-            if cur < cw:
-                return True, cw - cur
-        elif o <= cur < c:
-            return True, c - cur
-
-    best = None
-    for h in hours:
-        o = h * 3600 + open_min * 60
-        w = o - cur if o > cur else (_DAY - cur) + o
-        if best is None or w < best:
-            best = w
-    return False, best
-
-
-def _fmt_time(sec):
-    sec = max(0, int(sec))
-    if sec >= 3600:
-        h, r = divmod(sec, 3600)
-        m, s = divmod(r, 60)
-        return f"{h}:{m:02d}:{s:02d}"
-    m, s = divmod(sec, 60)
-    return f"{m:02d}:{s:02d}"
-
-
-# ══════════════════════════════════════════════════════════════
-#  Overlay  — debug rectangle over game window
-# ══════════════════════════════════════════════════════════════
-
-class OverlayWindow(QWidget):
-    _PEN = QPen(QColor(255, 255, 0), 2)
-    _BRUSH = QColor(255, 255, 0, 25)
-
-    def __init__(self, state):
-        super().__init__()
-        self._state = state
-        self._snap = None
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.show()
-        hwnd = int(self.winId())
-        cur = ctypes.windll.user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
-        ctypes.windll.user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, cur | _CLICK_THROUGH)
-        self.hide()
-
-    def sync(self):
-        s = self._state
-        gr, nr = s.game_rect, s.ocr_number_region
-
-        show_queue = gr and s.queue_search_active and (s.ocr_text_region or nr)
-        show_fish2 = gr and (
-            (s.fishing2_active and s.fishing2_step in ("cast", "strike", "reel", "end"))
-            or (s.fishing2_debug and s.fishing2_bar_rect)
-        )
-
-        if show_queue or show_fish2:
-            gx, gy, gw, gh = gr
-            geo = self.geometry()
-            if geo.x() != gx or geo.y() != gy or geo.width() != gw or geo.height() != gh:
-                self.setGeometry(gx, gy, gw, gh)
-            if not self.isVisible():
-                self.show()
-            snap = (gr, s.ocr_text_region, nr, s.queue_position,
-                    s.fishing2_step, s.fishing2_debug,
-                    s.fishing2_bar_rect,
-                    s.fishing2_green_zone,
-                    s.fishing2_slider_x, s.fishing2_pred_x,
-                    s.fishing2_slider_bounds,
-                    s.fishing2_bobber_rect,
-                    s.fishing2_bubbles, s.fishing2_camera_dir,
-                    s.fishing2_take_icon)
-            if snap != self._snap:
-                self._snap = snap
-                self.update()
-        elif self.isVisible():
-            self.hide()
-            self._snap = None
-
-    def paintEvent(self, _ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-
-        nr = self._state.ocr_number_region
-        if nr and self._state.queue_search_active:
-            p.setPen(self._PEN)
-            p.setBrush(self._BRUSH)
-            p.drawRect(*nr)
-
-        self._paint_fishing2(p)
-        p.end()
-
-    def _paint_fishing2(self, p: QPainter):
-        s = self._state
-        step = s.fishing2_step
-
-        # Show bar zone only during cast phase
-        if step == "cast" and s.fishing2_bar_rect:
-            bx, by, bw, bh = s.fishing2_bar_rect
-            p.setPen(QPen(QColor(255, 220, 50), 1))
-            p.setBrush(QColor(255, 220, 50, 20))
-            p.drawRect(bx, by - 2, bw, bh + 4)
-
-        if step not in ("cast", "strike", "reel", "end"):
-            return
-
-        if step == "cast":
-            bar = s.fishing2_bar_rect
-            gz = s.fishing2_green_zone
-
-            if gz:
-                gx, gy, gw, gh = gz
-                p.setPen(QPen(QColor(80, 255, 80), 2))
-                p.setBrush(QColor(80, 255, 80, 40))
-                p.drawRect(gx, gy, gw, gh)
-
-            ref_y = gz[1] if gz else (bar[1] if bar else None)
-            ref_h = gz[3] if gz else (bar[3] if bar else None)
-
-            sb = s.fishing2_slider_bounds
-            if sb and ref_y is not None:
-                sl, sr = sb
-                p.setPen(QPen(QColor(255, 255, 255, 180), 1))
-                p.setBrush(QColor(255, 255, 255, 30))
-                p.drawRect(sl, ref_y - 4, sr - sl, ref_h + 8)
-
-            px = s.fishing2_pred_x
-            if px is not None and ref_y is not None:
-                p.setPen(QPen(QColor(255, 60, 60), 3))
-                p.drawLine(px, ref_y - 10, px, ref_y + ref_h + 10)
-
-        elif step == "strike":
-            bob = s.fishing2_bobber_rect
-            if bob:
-                bx, by, bw, bh = bob
-                if s.fishing2_bubbles:
-                    p.setPen(QPen(QColor(255, 165, 0), 3))
-                    p.setBrush(QColor(255, 165, 0, 30))
-                else:
-                    p.setPen(QPen(QColor(255, 80, 255), 2))
-                    p.setBrush(QColor(255, 80, 255, 20))
-                p.drawRect(bx, by, bw, bh)
-
-        elif step == "end":
-            tk = s.fishing2_take_icon
-            if tk:
-                tx, ty, tw, th = tk
-                p.setPen(QPen(QColor(255, 220, 50), 2))
-                p.setBrush(QColor(255, 220, 50, 30))
-                p.drawRect(tx, ty, tw, th)
-
-
-# ══════════════════════════════════════════════════════════════
-#  StashTimerWidget — row with progress bar + text overlay
-# ══════════════════════════════════════════════════════════════
-
-class StashTimerWidget(QWidget):
-    _BG      = QColor(255, 255, 255, 10)
-    _FILL_G  = QColor(80, 200, 80, 90)
-    _FILL_R  = QColor(200, 70, 70, 90)
-
-    def __init__(self, icon_name, hours, open_min, dur_min, parent=None):
-        super().__init__(parent)
-        self._hours = hours
-        self._open_min = open_min
-        self._dur = dur_min
-        self._is_open = False
-        self._progress = 0.0
-        self._secs_left = 0
-        self._was_open = False
-        self._just_opened = False
-
-        self._open_sec = dur_min * 60
-        cycle = (hours[1] - hours[0]) * 3600 if len(hours) >= 2 else _DAY
-        self._closed_sec = cycle - self._open_sec
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(7, 1, 7, 1)
-        lay.setSpacing(5)
-
-        self._icon = IconWidget(icon_name)
-        self._icon.setFixedSize(21, 21)
-        self._icon.set_color(QColor(255, 255, 255))
-        lay.addWidget(self._icon)
-
-        lay.addStretch()
-
-        self._time = QLabel("--:--")
-        self._time.setFont(pixel_font(19))
-        self._time.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._time.setStyleSheet("color: white;")
-        lay.addWidget(self._time)
-
-    @property
-    def is_relevant(self):
-        return self._is_open or self._secs_left <= 180
-
-    def refresh(self):
-        is_open, secs = _stash_status(self._hours, self._open_min, self._dur)
-        self._secs_left = secs
-        self._time.setText(_fmt_time(secs))
-        self._is_open = is_open
-        if is_open and not self._was_open:
-            self._just_opened = True
-        self._was_open = is_open
-        total = self._open_sec if is_open else self._closed_sec
-        self._progress = (1.0 - secs / total) if total else 1.0
-        self.update()
-
-    def paintEvent(self, _ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        r = 5
-
-        # track
-        p.setPen(Qt.NoPen)
-        p.setBrush(self._BG)
-        p.drawRoundedRect(1, 1, w - 2, h - 2, r, r)
-
-        # fill
-        bw = int((w - 2) * max(0.0, min(1.0, self._progress)))
-        if bw > 0:
-            p.setBrush(self._FILL_G if self._is_open else self._FILL_R)
-            p.drawRoundedRect(1, 1, bw, h - 2, r, r)
-
-        # border
-        color = COLOR_GREEN if self._is_open else COLOR_RED
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(color, 1))
-        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), r, r)
-
-        p.end()
-
-
-# ══════════════════════════════════════════════════════════════
-#  StashFloatWindow — floating always-on-top stash timers
-# ══════════════════════════════════════════════════════════════
-
-class StashFloatWindow(QWidget):
-    def __init__(self):
-        super().__init__()
-        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
-        self.setAttribute(Qt.WA_TranslucentBackground)
-        self.setAttribute(Qt.WA_ShowWithoutActivating)
-        self.show()
-        hwnd = int(self.winId())
-        cur = ctypes.windll.user32.GetWindowLongW(hwnd, _GWL_EXSTYLE)
-        ctypes.windll.user32.SetWindowLongW(hwnd, _GWL_EXSTYLE, cur | _CLICK_THROUGH)
-        self.hide()
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(6, 4, 6, 4)
-        lay.setSpacing(12)
-
-        self._items = []  # [(IconWidget, QLabel)]
-        for name, *_ in STASHES:
-            icon = IconWidget(name)
-            icon.setFixedSize(21, 21)
-            icon.set_color(QColor(255, 255, 255))
-            lbl = QLabel("--:--")
-            lbl.setFont(pixel_font(19))
-            lbl.setStyleSheet("color: white;")
-            lay.addWidget(icon)
-            lay.addWidget(lbl)
-            icon.hide()
-            lbl.hide()
-            self._items.append((icon, lbl))
-
-    def update_timers(self, stash_widgets):
-        any_visible = False
-        for i, w in enumerate(stash_widgets):
-            icon, lbl = self._items[i]
-            if w.is_relevant:
-                icon.show()
-                lbl.show()
-                lbl.setText(w._time.text())
-                c = "rgb(80,200,80)" if w._is_open else "white"
-                lbl.setStyleSheet(f"color: {c};")
-                any_visible = True
-            else:
-                icon.hide()
-                lbl.hide()
-        if any_visible:
-            self.adjustSize()
-            scr = QApplication.primaryScreen().geometry()
-            self.move((scr.width() - self.width()) // 2, 0)
-            if not self.isVisible():
-                self.show()
-        elif self.isVisible():
-            self.hide()
-
-
-# ══════════════════════════════════════════════════════════════
-#  QueueETAWidget — progress bar with estimated time
-# ══════════════════════════════════════════════════════════════
-
-class QueueETAWidget(QWidget):
-    _BG     = QColor(255, 255, 255, 10)
-    _FILL   = QColor(80, 200, 80, 90)
-
-    _BLEND = 0.2    # how fast display catches up to target ETA
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self._progress = 0.0
-        self._eta_display = None   # smoothed value shown to user
-
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(7, 1, 7, 1)
-        lay.setSpacing(5)
-        lay.addStretch()
-
-        self._time = QLabel("")
-        self._time.setFont(pixel_font(19))
-        self._time.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        self._time.setStyleSheet("color: white;")
-        lay.addWidget(self._time)
-
-    def refresh(self, state):
-        self._progress = max(0.0, min(1.0, state.queue_progress))
-        eta = state.queue_eta_seconds
-        if eta is not None and eta >= 0:
-            if self._eta_display is not None and self._eta_display > 0:
-                # natural countdown (-1s) then blend towards real ETA
-                counted = self._eta_display - 1
-                self._eta_display = (1 - self._BLEND) * counted + self._BLEND * eta
-                self._eta_display = max(0.0, self._eta_display)
-            else:
-                self._eta_display = eta
-            self._time.setText(_fmt_time(self._eta_display))
-        else:
-            self._eta_display = None
-            self._time.setText("")
-        self.update()
-
-    def paintEvent(self, _ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-        r = 5
-
-        # track
-        p.setPen(Qt.NoPen)
-        p.setBrush(self._BG)
-        p.drawRoundedRect(1, 1, w - 2, h - 2, r, r)
-
-        # fill
-        bw = int((w - 2) * max(0.0, min(1.0, self._progress)))
-        if bw > 0:
-            p.setBrush(self._FILL)
-            p.drawRoundedRect(1, 1, bw, h - 2, r, r)
-
-        # border
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(COLOR_GREEN, 1))
-        p.drawRoundedRect(QRectF(0.5, 0.5, w - 1, h - 1), r, r)
-
-        p.end()
-
-
-# ══════════════════════════════════════════════════════════════
-#  _FooterBar — footer with background progress bar
-# ══════════════════════════════════════════════════════════════
-
-class _FooterBar(QWidget):
-    _BG   = QColor(20, 20, 24, 230)
-    _FILL = QColor(80, 200, 80, 40)
-    _BORDER_TOP = QColor(255, 255, 255, 15)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setFixedHeight(22)
-        self._progress = 0.0
-
-    def set_progress(self, value):
-        self._progress = max(0.0, min(1.0, value))
-        self.update()
-
-    def paintEvent(self, _ev):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing)
-        w, h = self.width(), self.height()
-
-        # background
-        p.setPen(Qt.NoPen)
-        p.setBrush(self._BG)
-        p.drawRect(0, 0, w, h)
-
-        # progress fill
-        bw = int(w * self._progress)
-        if bw > 0:
-            p.setBrush(self._FILL)
-            p.drawRect(0, 0, bw, h)
-
-        # top border line
-        p.setPen(QPen(self._BORDER_TOP, 1))
-        p.drawLine(0, 0, w, 0)
-
-        p.end()
-
-
-# ══════════════════════════════════════════════════════════════
-#  MainWindow — square dark panel, top-right corner
-# ══════════════════════════════════════════════════════════════
 
 class MainWindow(QMainWindow):
-    # signals for thread→GUI communication (update checker)
-    _sig_update_progress = pyqtSignal(float, str)  # (progress, status_text)
-    _sig_update_result = pyqtSignal(str)            # "ok" | "apply:path" | "no_server" | "error"
+    _sig_update_progress = pyqtSignal(float, str)
+    _sig_update_result = pyqtSignal(str)
 
-    # page_index → back target (int = page, str = method name)
-    _BACK = {1: "_close_queue_page", 2: 0, 3: 2, 4: 0, 5: 4, 6: 0}
+    _BACK = {1: "_close_queue_page", 2: 0, 3: 2, 4: 0, 5: 4, 6: 0, 7: 2}
 
     def __init__(self, state):
         super().__init__()
         self._state = state
-        _load_fonts()
+        load_fonts()
 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
         scr = QApplication.primaryScreen().geometry()
-        self._h = scr.height() // 5          # reference for element sizing
+        self._h = scr.height() // 5
         self._w = self._h * 4 // 5
-        btn_row = 27 + 10 + 5                # font + padding + spacing
+        btn_row = 27 + 10 + 5
         footer_h = 22
         self.setFixedSize(self._w, self._h - btn_row * 3 + footer_h)
         self.move(scr.width() - self._w, 0)
@@ -618,23 +69,24 @@ class MainWindow(QMainWindow):
 
         self._stack = QStackedWidget()
         root.addWidget(self._stack, 1)
-        self._stack.addWidget(self._build_menu_page())    # 0
-        self._stack.addWidget(self._build_queue_page())   # 1
-        self._stack.addWidget(self._build_helper_page())  # 2
-        self._stack.addWidget(self._build_stash_page())   # 3
-        self._stack.addWidget(self._build_bots_page())    # 4
-        self._stack.addWidget(self._build_fishing2_page()) # 5
-        self._stack.addWidget(self._build_settings_page()) # 6
+        self._stack.addWidget(self._build_menu_page())      # 0
+        self._stack.addWidget(self._build_queue_page())      # 1
+        self._stack.addWidget(self._build_helper_page())     # 2
+        self._stack.addWidget(self._build_stash_page())      # 3
+        self._stack.addWidget(self._build_bots_page())       # 4
+        self._stack.addWidget(self._build_fishing2_page())   # 5
+        self._stack.addWidget(self._build_settings_page())   # 6
+        self._stack.addWidget(self._build_markers_page())    # 7
 
-        # ── Footer ──
         root.addWidget(self._build_footer())
 
-        # ── UI lock until update check completes ──
         self._ui_locked = True
         self._stack.setEnabled(False)
 
         self._overlay = OverlayWindow(state)
         self._stash_float = StashFloatWindow()
+        self._marker_arrow = MarkerArrowOverlay()
+        self._marker_world = MarkerWorldOverlay()
 
         self._fish2_timer = QTimer(self)
         self._fish2_timer.timeout.connect(self._on_fish2_tick)
@@ -645,20 +97,16 @@ class MainWindow(QMainWindow):
 
         self._update_game_status()
 
-        # global click sound
-        _init_click_sound()
-        self._click_filter = _ClickSoundFilter(self)
+        init_click_sound()
+        self._click_filter = ClickSoundFilter(self)
         QApplication.instance().installEventFilter(self._click_filter)
 
         t = QTimer(self)
         t.timeout.connect(self._on_tick)
         t.start(1000)
 
-        # Connect update signals (thread-safe GUI updates)
         self._sig_update_progress.connect(self._on_update_progress)
         self._sig_update_result.connect(self._on_update_result)
-
-        # Start update check in background thread
         self._start_update_check()
 
     # ── Title bar ──
@@ -674,7 +122,6 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(4, 2, 4, 0)
         lay.setSpacing(0)
 
-        # left
         left = QWidget()
         left.setFixedWidth(side_w)
         ll = QHBoxLayout(left)
@@ -683,7 +130,7 @@ class MainWindow(QMainWindow):
         self._btn_back = QPushButton("<")
         self._btn_back.setCursor(Qt.PointingHandCursor)
         self._btn_back.setFixedSize(bs, bs)
-        self._btn_back.setStyleSheet(_button_style())
+        self._btn_back.setStyleSheet(button_style())
         self._btn_back.clicked.connect(self._go_back)
         self._btn_back.hide()
         ll.addWidget(self._btn_back)
@@ -692,7 +139,6 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
-        # center icons
         self.game_icon = IconWidget("gta5")
         self.game_icon.setFixedSize(bs, bs)
         self.game_icon.set_color(COLOR_RED)
@@ -709,7 +155,6 @@ class MainWindow(QMainWindow):
 
         lay.addStretch()
 
-        # right
         right = QWidget()
         right.setFixedWidth(side_w)
         rl = QHBoxLayout(right)
@@ -723,7 +168,6 @@ class MainWindow(QMainWindow):
             rl.addWidget(b)
         lay.addWidget(right)
 
-        # Floating toggle — absolutely positioned, not in layout
         th = max(bs // 2, 8)
         tw = int(th * 2.6)
         self._title_toggle = ToggleSwitch(checked=False, parent=bar)
@@ -737,7 +181,7 @@ class MainWindow(QMainWindow):
     # ── Footer ──
 
     def _build_footer(self):
-        self._footer = _FooterBar()
+        self._footer = FooterBar()
 
         self._update_icon = SpinningIconWidget("update")
         self._update_icon.setFixedSize(16, 16)
@@ -776,11 +220,9 @@ class MainWindow(QMainWindow):
         t.start()
 
     def _update_worker(self):
-        """Background thread: check version, download if needed. All sync."""
         from updater import check_update_sync, download_update_sync
         from core import SERVER_URL
 
-        # 1. Check version
         try:
             info = check_update_sync(SERVER_URL)
         except Exception:
@@ -803,7 +245,6 @@ class MainWindow(QMainWindow):
             self._sig_update_result.emit("ok")
             return
 
-        # 2. Download
         version = info.get("version", "?")
         self._sig_update_progress.emit(0.0, f"загрузка {version}...")
         dest = os.path.join(os.path.dirname(sys.executable), "Mary Jane_new.exe")
@@ -819,13 +260,11 @@ class MainWindow(QMainWindow):
         else:
             self._sig_update_result.emit("error")
 
-    # ── Update slots (run on GUI thread via signal) ──
-
-    def _on_update_progress(self, value: float, text: str):
+    def _on_update_progress(self, value, text):
         self._footer.set_progress(value)
         self._update_status.setText(text)
 
-    def _on_update_result(self, result: str):
+    def _on_update_result(self, result):
         self._update_icon.stop_spin()
         if result == "ok":
             self._update_icon.icon_type = "check"
@@ -853,9 +292,14 @@ class MainWindow(QMainWindow):
     # ── Navigation ──
 
     def _go_to(self, idx):
+        prev = self._stack.currentIndex()
         self._stack.setCurrentIndex(idx)
         self._btn_back.setVisible(idx != 0)
         self._setup_title_toggle(idx)
+        if idx == 7:
+            self._state.markers_active = True
+        elif prev == 7:
+            self._state.markers_active = False
 
     def _go_back(self):
         target = self._BACK.get(self._stack.currentIndex())
@@ -865,8 +309,6 @@ class MainWindow(QMainWindow):
             getattr(self, target)()
         else:
             self._go_to(target)
-
-    # ── Title toggle (floating, per-page) ──
 
     _TOGGLE_PAGES = {1: "_on_queue_toggle", 3: "_on_stash_toggle"}
 
@@ -882,7 +324,6 @@ class MainWindow(QMainWindow):
                           else getattr(self._state, 'stash_active', False))
             tg.toggled.connect(getattr(self, handler))
             tg.show()
-            # Defer to next event loop tick so layout has computed positions
             QTimer.singleShot(0, self._position_title_toggle)
         else:
             tg.hide()
@@ -890,7 +331,6 @@ class MainWindow(QMainWindow):
     def _position_title_toggle(self):
         tg = self._title_toggle
         bar = self._title_bar
-        # actual widget positions relative to title bar
         back_right = self._btn_back.mapTo(bar, self._btn_back.rect().topRight()).x()
         icon_left = self.game_icon.mapTo(bar, self.game_icon.rect().topLeft()).x()
         cx = (back_right + icon_left) // 2
@@ -914,7 +354,7 @@ class MainWindow(QMainWindow):
                            ("Настройки", lambda: self._go_to(6))]:
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(_button_style())
+            b.setStyleSheet(button_style())
             b.clicked.connect(slot)
             lay.addWidget(b)
         lay.addStretch()
@@ -949,7 +389,7 @@ class MainWindow(QMainWindow):
         self._threshold_input = QLineEdit("30")
         self._threshold_input.setFixedWidth(65)
         self._threshold_input.setAlignment(Qt.AlignCenter)
-        self._threshold_input.setStyleSheet(_input_style())
+        self._threshold_input.setStyleSheet(input_style())
         self._threshold_input.textChanged.connect(self._on_threshold_changed)
         rl.addWidget(self._threshold_input)
 
@@ -962,10 +402,11 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(7, 5, 7, 5)
         lay.setSpacing(5)
         for text, slot in [("Очередь", self._open_queue_page),
-                           ("Тайники", lambda: self._go_to(3))]:
+                           ("Тайники", lambda: self._go_to(3)),
+                           ("Метки",   lambda: self._go_to(7))]:
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(_button_style())
+            b.setStyleSheet(button_style())
             b.clicked.connect(slot)
             lay.addWidget(b)
         lay.addStretch()
@@ -984,21 +425,54 @@ class MainWindow(QMainWindow):
             lay.addWidget(w, 1)
         return page
 
+    def _build_markers_page(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(7, 5, 7, 5)
+        lay.setSpacing(3)
+
+        self._marker_labels = {}
+        for key in ("X", "Y", "Z", "Yaw", "Pitch", "Dist"):
+            lbl = QLabel(f"{key}  \u2014")
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setFont(pixel_font(18))
+            lbl.setStyleSheet("color:rgb(200,200,200);")
+            self._marker_labels[key] = lbl
+            lay.addWidget(lbl)
+
+        self._marker_btn = QPushButton("Поставить")
+        self._marker_btn.setCursor(Qt.PointingHandCursor)
+        self._marker_btn.setStyleSheet(button_style())
+        self._marker_btn.clicked.connect(self._on_marker_btn)
+        lay.addWidget(self._marker_btn)
+
+        lay.addStretch()
+        return page
+
+    def _on_marker_btn(self):
+        s = self._state
+        if s.markers_target is not None:
+            s.markers_target = None
+            self._marker_btn.setText("Поставить")
+        else:
+            if s.markers_pos:
+                s.markers_target = s.markers_pos
+                self._marker_btn.setText("Убрать")
+
     def _build_bots_page(self):
         page = QWidget()
         lay = QVBoxLayout(page)
         lay.setContentsMargins(7, 5, 7, 5)
         lay.setSpacing(5)
 
-        self._gated_buttons = []  # [(QPushButton, IconWidget, module_id), ...]
+        self._gated_buttons = []
 
         for text, page_idx, module_id in [("Рыбалка", 5, "fishing")]:
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
-            b.setStyleSheet(_button_style())
+            b.setStyleSheet(button_style())
             b.clicked.connect(lambda _=False, p=page_idx, m=module_id: self._go_to_gated(p, m))
 
-            # Clock icon on right side of button — visible when subscribed
             clock = IconWidget("clock")
             clock.setFixedSize(16, 16)
             clock.set_color(QColor(200, 200, 160))
@@ -1012,30 +486,18 @@ class MainWindow(QMainWindow):
         lay.addStretch()
         return page
 
-    def _gated_border_style(self, color_rgb: str) -> str:
-        ff = f"font-family: '{_font_families['app']}';" if _font_families.get("app") else ""
-        return f"""
-            QPushButton {{
-                background: rgb(32,32,38); color: rgb(240,240,240);
-                border: 1px solid {color_rgb}; border-radius: 5px;
-                padding: 5px; font-size: 27px; {ff}
-            }}
-            QPushButton:hover {{ background: rgb(44,44,52); }}
-        """
-
     def _update_gated_buttons(self):
-        """Update border color and clock icon on paid module buttons."""
         sm = self._state.subscription_manager
         if not sm:
             return
         loading = sm._cache_time == 0.0 and self._state.is_authenticated
         for btn, clock, module_id in self._gated_buttons:
             if loading:
-                btn.setStyleSheet(self._gated_border_style("rgba(220,180,50,180)"))
+                btn.setStyleSheet(gated_border_style("rgba(220,180,50,180)"))
                 clock.setToolTip("")
                 clock.hide()
             elif sm.has_access(module_id):
-                btn.setStyleSheet(self._gated_border_style("rgba(80,200,80,180)"))
+                btn.setStyleSheet(gated_border_style("rgba(80,200,80,180)"))
                 expires = sm.get_expires(module_id)
                 if expires:
                     try:
@@ -1043,7 +505,6 @@ class MainWindow(QMainWindow):
                         clock.setToolTip(f"до {dt.strftime('%d.%m.%Y')}")
                     except Exception:
                         clock.setToolTip("")
-                    # Position clock icon at right center of button
                     bh = btn.height()
                     clock.move(btn.width() - 22, (bh - 16) // 2)
                     clock.show()
@@ -1051,12 +512,11 @@ class MainWindow(QMainWindow):
                     clock.setToolTip("")
                     clock.hide()
             else:
-                btn.setStyleSheet(self._gated_border_style("rgba(200,70,70,180)"))
+                btn.setStyleSheet(gated_border_style("rgba(200,70,70,180)"))
                 clock.setToolTip("")
                 clock.hide()
 
     def _go_to_gated(self, page_idx, module_id):
-        """Navigate to page if user has access, otherwise request invoice via API."""
         s = self._state
         if s.subscription_manager and not s.subscription_manager.has_access(module_id):
             if not s.is_authenticated:
@@ -1081,7 +541,6 @@ class MainWindow(QMainWindow):
         self._fish2_status.setStyleSheet("color:rgb(200,200,200);")
         lay.addWidget(self._fish2_status, 1)
 
-        # Debug slider (hidden by default)
         self._fish2_debug_panel = QWidget()
         dl = QVBoxLayout(self._fish2_debug_panel)
         dl.setContentsMargins(0, 0, 0, 0)
@@ -1118,7 +577,7 @@ class MainWindow(QMainWindow):
 
         self._fish2_btn = QPushButton("Старт")
         self._fish2_btn.setCursor(Qt.PointingHandCursor)
-        self._fish2_btn.setStyleSheet(_button_style())
+        self._fish2_btn.setStyleSheet(button_style())
         self._fish2_btn.clicked.connect(self._toggle_fishing2)
         lay.addWidget(self._fish2_btn)
         return page
@@ -1158,7 +617,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(5)
         btn = QPushButton("Сброс")
         btn.setCursor(Qt.PointingHandCursor)
-        btn.setStyleSheet(_button_style())
+        btn.setStyleSheet(button_style())
         btn.clicked.connect(self._reset_settings)
         lay.addWidget(btn)
         lay.addStretch()
@@ -1173,20 +632,17 @@ class MainWindow(QMainWindow):
                 data = json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
             pass
-        # Keep only auth tokens
         preserved = {}
         for key in ("access_token", "refresh_token"):
             if key in data:
                 preserved[key] = data[key]
         with open(_CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(preserved, f, ensure_ascii=False)
-        # Reset AppState fields
         s = self._state
         s.fishing2_pred_time = 0.12
         s.fishing2_bar_rect = None
         s.fishing2_debug = False
         s.fishing2_calibrated = False
-        # Reset slider UI
         self._fish2_slider.setValue(120)
         self._go_to(0)
 
@@ -1208,7 +664,6 @@ class MainWindow(QMainWindow):
             self._fish2_status.setText("Остановлен")
             self._fish2_timer.stop()
         else:
-            # Auto-calibration: show slider if no saved bar_rect
             from modules.fishing.loop import _load_bar_rect
             if _load_bar_rect() is None:
                 s.fishing2_debug = True
@@ -1268,7 +723,6 @@ class MainWindow(QMainWindow):
     # ── Callbacks ──
 
     def _focus_game(self):
-        """Minimize all windows except game and our app, then focus the game."""
         from core import GAME_WINDOW_TITLE
         game_hwnd = ctypes.windll.user32.FindWindowW(None, GAME_WINDOW_TITLE)
         if not game_hwnd:
@@ -1284,7 +738,6 @@ class MainWindow(QMainWindow):
                 return True
             if not ctypes.windll.user32.IsWindowVisible(hwnd):
                 return True
-            # Skip windows without title (system stuff)
             length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
             if length == 0:
                 return True
@@ -1293,22 +746,17 @@ class MainWindow(QMainWindow):
 
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_int, ctypes.POINTER(ctypes.c_int))
         ctypes.windll.user32.EnumWindows(WNDENUMPROC(_enum_cb), 0)
-
-        # Bring game to foreground
         ctypes.windll.user32.SetForegroundWindow(game_hwnd)
 
     def _toggle_telegram(self):
         if self._state.is_authenticated:
-            # Already logged in — log out
             self._state.token_store.clear()
             self._state.is_authenticated = False
             self._state.user_info = None
         else:
-            # Start auth flow — open browser
             self._start_auth_flow()
 
     def _start_auth_flow(self):
-        """Open browser for Telegram auth via localhost callback."""
         import webbrowser
         from auth.login_server import LoginCallbackServer
 
@@ -1320,11 +768,9 @@ class MainWindow(QMainWindow):
         auth_url = f"{s.server_url}/auth/login-page?redirect={redirect}"
         webbrowser.open(auth_url)
 
-        # Handle callback in background
         async def _wait_auth():
             data = await server.wait_for_callback(timeout=120)
             if data and s.api_client:
-                # Convert callback params to auth request
                 auth_data = {
                     "id": int(data.get("id", 0)),
                     "first_name": data.get("first_name"),
@@ -1395,6 +841,69 @@ class MainWindow(QMainWindow):
                 self._stash_float.hide()
         self._overlay.sync()
         self._update_gated_buttons()
+        self._update_markers()
+
+    def _update_markers(self):
+        if not self._state.markers_active:
+            if self._marker_arrow.isVisible():
+                self._marker_arrow.hide()
+            if self._marker_world.isVisible():
+                self._marker_world.hide()
+            return
+
+        s = self._state
+        p = s.markers_pos
+        yaw = s.markers_yaw
+        pitch = s.markers_pitch
+        target = s.markers_target
+
+        gr = get_game_rect()
+        if gr:
+            s.game_rect = gr
+
+        if p:
+            self._marker_labels["X"].setText(f"X  {p[0]:.1f}")
+            self._marker_labels["Y"].setText(f"Y  {p[1]:.1f}")
+            self._marker_labels["Z"].setText(f"Z  {p[2]:.1f}")
+        else:
+            for k in ("X", "Y", "Z"):
+                self._marker_labels[k].setText(f"{k}  \u2014")
+        self._marker_labels["Yaw"].setText(f"Yaw  {yaw:.1f}\u00b0" if yaw is not None else "Yaw  \u2014")
+        self._marker_labels["Pitch"].setText(f"Pitch  {pitch:.1f}\u00b0" if pitch is not None else "Pitch  \u2014")
+
+        if target and p and yaw is not None:
+            dx = target[0] - p[0]
+            dy = target[1] - p[1]
+            dz = target[2] - p[2]
+            horiz_dist = math.hypot(dx, dy)
+            dist_3d = math.hypot(horiz_dist, dz)
+            self._marker_labels["Dist"].setText(f"Dist  {dist_3d:.1f}")
+            target_yaw = math.degrees(math.atan2(dx, dy))
+            yaw_delta = (yaw - target_yaw + 180) % 360 - 180
+            target_pitch = math.degrees(math.atan2(dz, horiz_dist)) if horiz_dist > 0.1 else 0.0
+            pitch_delta = target_pitch - (pitch or 0.0)
+            self._marker_arrow.update_arrow(yaw_delta, pitch_delta, dist_3d, gr)
+
+            cp = s.markers_cam_pos
+            cr = s.markers_cam_right
+            cf = s.markers_cam_fwd
+            cu = s.markers_cam_up
+            if gr and cp and cr and cf and cu:
+                proj = w2s(target, cp, cr, cf, cu, gr)
+                if proj:
+                    self._marker_world.update_marker(proj[0], proj[1], proj[2], gr)
+                else:
+                    if self._marker_world.isVisible():
+                        self._marker_world.hide()
+            else:
+                if self._marker_world.isVisible():
+                    self._marker_world.hide()
+        else:
+            self._marker_labels["Dist"].setText("Dist  \u2014")
+            if self._marker_arrow.isVisible():
+                self._marker_arrow.hide()
+            if self._marker_world.isVisible():
+                self._marker_world.hide()
 
     def _update_game_status(self):
         found = is_game_running()
@@ -1427,4 +936,15 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev):
         self._overlay.close()
         self._stash_float.close()
+        self._marker_arrow.close()
+        self._marker_world.close()
+        s = self._state
+        s.fishing2_active = False
+        s.queue_search_active = False
+        if s.frame_provider.running:
+            s.frame_provider.stop()
+        if s.loop and s.loop.is_running():
+            if s.api_client:
+                asyncio.run_coroutine_threadsafe(s.api_client.close(), s.loop)
+            s.loop.call_soon_threadsafe(s.loop.stop)
         super().closeEvent(ev)

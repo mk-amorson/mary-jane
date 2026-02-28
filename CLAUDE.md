@@ -1,121 +1,169 @@
 # MJ Port V2
 
-Десктопное приложение для мониторинга очереди на сервере Majestic Multiplayer (GTA RP). OCR читает позицию в очереди с экрана игры, уведомляет через Telegram или звуковой сигнал. Таймеры тайников с прогресс-барами.
+Десктопное приложение-компаньон для сервера Majestic Multiplayer (GTA RP). Мониторинг очереди (OCR), таймеры тайников, автоматизация рыбалки (memory reading), auth через Telegram. Клиент-серверная архитектура.
 
 ## Запуск
 
+### Сервер
+
 ```bash
+# 1. FastAPI
+C:\Users\mkamo\AppData\Local\Programs\Python\Python314\python.exe -m uvicorn server.main:app --host 0.0.0.0 --port 8000
+
+# 2. ngrok (статический домен)
+C:\Users\mkamo\AppData\Local\ngrok\ngrok.exe http 8000 --url=axiomatic-aryana-hillocky.ngrok-free.dev
+```
+
+### Клиент
+
+```bash
+pip install -r requirements.txt
 C:\Users\mkamo\AppData\Local\Programs\Python\Python314\python.exe main.py
 ```
 
-**Зависимости:** PyQt5, aiogram 3.x, pytesseract, Pillow, windows-capture, pywin32
+**Внешний:** Tesseract-OCR (`C:\Program Files\Tesseract-OCR\tesseract.exe`, rus+eng)
 
-**Внешние:** Tesseract-OCR (`C:\Program Files\Tesseract-OCR\tesseract.exe`, языки: rus+eng)
+### Тесты
+
+```bash
+python -m pytest tests/ -v
+```
 
 ## Структура
 
 ```
-main.py                  — точка входа (asyncio loop в фоновом потоке + PyQt5 в главном)
-core.py                  — AppState (центральный хаб), GameFrameProvider (WGC), game detection
-bot.py                   — Telegram-бот (aiogram 3.x), /screenshot
-modules/queue_monitor.py — 2-фазный OCR: поиск текста → извлечение цифр
-ui/window.py             — MainWindow, OverlayWindow, StashTimerWidget
-ui/widgets.py            — IconWidget, TitleButton, ToggleSwitch
-fonts/GTA Russian.ttf    — основной шрифт UI
-fonts/web_ibm_mda.ttf    — пиксельный моноширный шрифт для таймеров тайников
-icons/                   — SVG иконки (gta5.svg, telegram.svg)
+main.py                       — точка входа (asyncio в bg-потоке + PyQt5 в главном)
+core.py                       — AppState, GameFrameProvider (WGC), SERVER_URL из config.json
+api_client.py                 — aiohttp клиент, JWT auth, auto-refresh + refresh lock
+updater.py                    — проверка/скачивание обновлений через GitHub releases
+version.py                    — __version__ = "1.0.2"
+utils.py                      — resource_path() для PyInstaller
+requirements.txt              — клиентские зависимости (pinned)
+config.json                   — JWT токены + server_url + калибровка fishing (в .gitignore)
+
+auth/
+  token_store.py              — JWT persistence в config.json
+  login_server.py             — localhost HTTP callback для Telegram Login Widget
+
+modules/
+  queue_monitor.py            — 2-фазный OCR + ETA, сброс при смене game_rect
+  subscription.py             — SubscriptionManager (1hr cache, free/paid модули)
+  input.py                    — Win32 SendInput (keyboard scancode/vkey, mouse, text)
+  markers.py                  — async loop: позиция/heading/camera из GTA5Memory
+
+  fishing/
+    loop.py                   — state machine: idle→cast→strike→reel→end (50ms tick)
+    detection.py              — template match, HSV green zone/slider, Sobel edges
+    memory.py                 — GTA5Memory (pymem), HeadingTracker (EMA)
+    trackers.py               — SliderTracker (скорость через linear regression)
+    regions.py                — расчёт take_region
+    input.py                  — re-export modules.input
+
+ui/
+  window.py                   — MainWindow (950 строк)
+  styles.py                   — шрифты, цвета, кешированные CSS
+  sounds.py                   — click sound, ClickSoundFilter
+  overlay.py                  — OverlayWindow (click-through debug overlay)
+  stash.py                    — StashTimerWidget, StashFloatWindow, расписания
+  markers.py                  — MarkerArrowOverlay, MarkerWorldOverlay, w2s
+  queue.py                    — QueueETAWidget
+  footer.py                   — FooterBar
+  widgets.py                  — IconWidget, SpinningIconWidget, TitleButton, ToggleSwitch
+
+server/
+  main.py                     — FastAPI + lifespan (webhook + wiki scraper)
+  config.py                   — Pydantic Settings из .env
+  database.py                 — Supabase REST обёртка (httpx, без SDK)
+  auth/                       — Telegram Login валидация, JWT, middleware
+  bot/                        — /start, /help, Stars-оплата, webhook
+  routers/                    — auth, items, prices, modules, notify, app
+  scraper/wiki.py             — ежедневный парсер каталога предметов
+
+tests/                        — pytest тесты (HeadingTracker, OCR, ETA, stash, core)
+supabase/migrations/          — SQL-схема
+fonts/                        — GTA Russian.ttf, web_ibm_mda.ttf
+icons/                        — SVG/PNG иконки
+reference/                    — PNG-шаблоны для fishing
+sounds/                       — click.mp3
+tools/                        — debug/calibration скрипты (не продакшен)
 ```
 
 ## Архитектура
 
 ### Потоки
 
-- **Главный поток** — PyQt5 event loop (UI)
-- **Фоновый поток** — asyncio loop с двумя корутинами:
-  - `queue_monitor_loop()` — OCR мониторинг каждые 1 сек
-  - `telegram_manager()` — динамический старт/стоп бот-поллинга
+- **Главный** — PyQt5 event loop (UI)
+- **Фоновый** — asyncio loop, 5 корутин:
+  - `queue_monitor_loop()` — OCR каждые 1 сек
+  - `fishing2_bot_loop()` — рыбалка каждые 50 мс
+  - `auth_check_loop()` — auth + подписки каждые 30 сек
+  - `markers_loop()` — позиция/heading/camera из памяти
+  - `_fetch_bot_username()` — однократно при старте
 
 ### Связь между потоками
 
-`AppState` (core.py) — единый объект состояния, доступен обоим потокам. Поля читаются/пишутся напрямую (атомарные типы Python). Нет мьютексов кроме `GameFrameProvider._lock` для фрейм-буфера.
+`AppState` — единый мутабельный объект. Поля атомарных типов (int, bool, str) безопасны через GIL. Tuple-поля (`markers_pos`, `fishing2_green_zone`) — без мьютексов.
 
-### Компоненты
+### Клиент-сервер
 
-- **AppState** (core.py) — все флаги, пороги, OCR-регионы, ссылки на бот/loop
-- **GameFrameProvider** (core.py) — захват экрана через Windows Graphics Capture API, thread-safe доступ к фреймам
-- **MainWindow** (ui/window.py) — квадратное окно (screen.height()//6), QStackedWidget с 4 страницами
-- **OverlayWindow** (ui/window.py) — прозрачное click-through окно, рисует жёлтый прямоугольник вокруг OCR-региона
+- **Клиент** → `ApiClient` (aiohttp) → `SERVER_URL` из config.json (default: localhost:8000)
+- **Сервер** → FastAPI → Supabase (httpx REST) + Telegram Bot (aiogram webhook)
+- Auth: Telegram Login Widget → localhost callback → JWT (access 60min + refresh 30d)
+- Подписки: Telegram Stars → server создаёт subscription
+- Token refresh защищён asyncio.Lock от race condition
 
-## OCR Pipeline (modules/queue_monitor.py)
+### Ключевые компоненты
 
-1. **Фаза 1 (поиск текста):** `find_text_region()` — OCR всего изображения (pytesseract, rus+eng) → ищем "очеред" как якорь → находим bbox фразы → фиксируем (`ocr_text_locked=True`), выполняется один раз
-2. **Фаза 2 (быстрая):** `calc_number_region()` вычисляет кроп справа от текста → `ocr_digits()` OCR только цифр (whitelist 0-9, psm 7) → `queue_position`
-3. **Уведомление:** если позиция < порога → Telegram сообщение (или тройной beep если TG недоступен)
+| Компонент | Файл | Назначение |
+|-----------|------|------------|
+| AppState | core.py | Центральный хаб состояния |
+| GameFrameProvider | core.py | WGC захват экрана, thread-safe буфер |
+| ApiClient | api_client.py | HTTP + JWT auto-refresh + refresh lock |
+| TokenStore | auth/token_store.py | JWT в config.json |
+| SubscriptionManager | modules/subscription.py | free/paid контроль доступа |
+| GTA5Memory | modules/fishing/memory.py | pymem: CPed, viewport |
+| HeadingTracker | modules/fishing/memory.py | EMA heading delta → reel direction |
 
-## UI
+## OCR Pipeline
 
-### Окно
+1. `find_text_region()` — полный OCR, поиск "очеред", фиксация bbox
+2. `calc_number_region()` → `ocr_digits()` — быстрый OCR цифр (PSM 7, whitelist 0-9)
+3. ETA: фильтр выбросов (>30), EMA rate (alpha=0.15)
+4. Автосброс OCR-региона при изменении game_rect (resize/move)
+5. Уведомление: POST /notify/queue или тройной beep
 
-- Квадрат screen.height()//6, правый верхний угол, opacity 0.9
-- Тёмная тема: bg `rgb(28,28,32)`, текст `rgb(200,200,200)`
-- Frameless, draggable, always-on-top
+## Fishing Bot
 
-### Title bar
+State machine (50ms tick): `idle → cast → strike → reel → end → cast`
+- **Cast**: SPACE, ждёт панель (GREEN_BAR_TMPL match)
+- **Strike**: ждёт пузыри (HoughCircles) или heading.moving
+- **Reel**: HeadingTracker → hold A/D, SliderTracker prediction
+- **End**: detect take icon → click, delay → next cast
 
-- **Левая часть** (фикс. ширина): кнопка «назад» (скрыта на главной)
-- **Центр**: иконки GTA (зелёная/красная = игра найдена/нет) и Telegram (красная/жёлтая/зелёная = выкл/connecting/connected), кликабельная
-- **Правая часть** (фикс. ширина = левая): minimize + close
+## UI (модульная структура)
 
-### Страницы (QStackedWidget)
+- `window.py` — MainWindow (950 строк), graceful shutdown в closeEvent
+- `styles.py` — шрифты (load_fonts, app_font, pixel_font), цвета, CSS
+- `sounds.py` — click sound + event filter
+- `overlay.py` — OverlayWindow (click-through)
+- `stash.py` — StashTimerWidget + StashFloatWindow + расписания
+- `markers.py` — 3D arrow overlay + world circle + w2s проекция
+- `queue.py` — QueueETAWidget с прогресс-баром
+- `footer.py` — FooterBar с индикатором обновления
 
-- **0 — Меню**: кнопки «Очередь», «Хелпер»
-- **1 — Очередь**: большая цифра позиции (font: win_size//3), toggle поиска, поле порога
-- **2 — Хелпер**: кнопка «Тайники»
-- **3 — Тайники**: 4 строки StashTimerWidget с прогресс-барами
+## Шрифты
 
-### Навигация
+- `GTA Russian.ttf` — основной (кнопки 22px, названия 16px, порог 20px)
+- `web_ibm_mda.ttf` — пиксельный моноширный (таймеры 16px)
 
-`_BACK` map: {1→_close_queue_page, 2→0, 3→2}. Кнопка назад в title bar, `_go_to()` управляет стеком и видимостью кнопки.
+## БД (Supabase)
 
-### StashTimerWidget
-
-- Прогресс-бар на всю ширину строки (custom paintEvent)
-- Фон: `rgba(255,255,255,10)`, заливка: зелёная (открыт) / красная (закрыт), alpha=90
-- Обводка: зелёная/красная, border-radius=4
-- Бар всегда заполняется слева направо (0% в начале периода → 100% к концу)
-- Цикл рассчитывается из расписания часов: cycle = (hours[1]-hours[0])*3600
-- Текст (название + таймер) белый, поверх бара
-- Таймер: пиксельный шрифт web_ibm_mda.ttf, 16px
-
-### Шрифты
-
-- `GTA Russian.ttf` — основной UI (кнопки 22px, названия тайников 16px, порог-лейбл 20px)
-- `web_ibm_mda.ttf` — пиксельный моноширный, таймеры тайников 16px
-- Загрузка через `_load_fonts()` → `_font_families` dict, кешируется
-
-### Стили
-
-- `_button_style()` / `_input_style()` — кешируемые CSS-строки для QPushButton / QLineEdit
-
-## Telegram-бот (bot.py)
-
-- aiogram 3.x, диспетчер с хэндлерами
-- `/screenshot` — захват экрана игры, отправка как фото
-- `telegram_manager()` — следит за `state.telegram_enabled`, динамически стартует/стопит поллинг
-- `chat_id` сохраняется при первом сообщении от пользователя
-
-## Тик (1 сек, MainWindow._on_tick)
-
-1. Проверка `is_game_running()` → обновление иконки GTA
-2. Обновление цвета иконки Telegram (с кешем `_tg_color`)
-3. Обновление текста позиции очереди
-4. Refresh всех StashTimerWidget
-5. Sync OverlayWindow с окном игры
+users, modules (5: stash/items/queue free, fishing/sell paid), subscriptions, items (868), price_history (append-only), price_summary (materialized view, pg_cron 5min)
 
 ## Важно
 
-- **BOT_TOKEN** в `core.py:15` — не коммитить в публичные репозитории
 - OCR работает при `queue_search_active=True`, НЕ привязан к toggle уведомлений
-- Toggle уведомлений управляет только отправкой в Telegram
+- `SERVER_URL` читается из config.json → `server_url`, fallback `http://localhost:8000`
 - Python 3.14, Windows 11
-- Системный python (`AppData\Local\Microsoft\WindowsApps\python`) — заглушка Microsoft Store, использовать `AppData\Local\Programs\Python\Python314\python.exe`
+- Системный python — заглушка MS Store, использовать `AppData\Local\Programs\Python\Python314\python.exe`
+- Secrets в config.json и server/.env — оба в .gitignore
