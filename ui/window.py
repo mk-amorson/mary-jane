@@ -2,7 +2,6 @@
 
 import os
 import sys
-import math
 import ctypes
 import logging
 import threading
@@ -16,6 +15,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QApplication, QStackedWidget, QLineEdit, QSlider,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor
 
 from core import is_game_running, get_game_rect
 from ui.styles import (
@@ -28,7 +28,6 @@ from ui.sounds import init_click_sound, play_click, ClickSoundFilter
 from ui.widgets import IconWidget, SpinningIconWidget, TitleButton, ToggleSwitch
 from ui.overlay import OverlayWindow
 from ui.stash import STASHES, StashTimerWidget, StashFloatWindow
-from ui.markers import MarkerArrowOverlay, MarkerWorldOverlay, w2s
 from ui.queue import QueueETAWidget
 from ui.footer import FooterBar
 
@@ -85,8 +84,6 @@ class MainWindow(QMainWindow):
 
         self._overlay = OverlayWindow(state)
         self._stash_float = StashFloatWindow()
-        self._marker_arrow = MarkerArrowOverlay()
-        self._marker_world = MarkerWorldOverlay()
 
         self._fish2_timer = QTimer(self)
         self._fish2_timer.timeout.connect(self._on_fish2_tick)
@@ -403,7 +400,7 @@ class MainWindow(QMainWindow):
         lay.setSpacing(5)
         for text, slot in [("Очередь", self._open_queue_page),
                            ("Тайники", lambda: self._go_to(3)),
-                           ("Метки",   lambda: self._go_to(7))]:
+                           ("Координаты", lambda: self._go_to(7))]:
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(button_style())
@@ -428,36 +425,42 @@ class MainWindow(QMainWindow):
     def _build_markers_page(self):
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(7, 5, 7, 5)
-        lay.setSpacing(3)
+        lay.setContentsMargins(12, 8, 12, 5)
+        lay.setSpacing(0)
 
         self._marker_labels = {}
-        for key in ("X", "Y", "Z", "Yaw", "Pitch", "Dist"):
-            lbl = QLabel(f"{key}  \u2014")
-            lbl.setAlignment(Qt.AlignCenter)
-            lbl.setFont(pixel_font(18))
-            lbl.setStyleSheet("color:rgb(200,200,200);")
-            self._marker_labels[key] = lbl
-            lay.addWidget(lbl)
+        lbl_style = "color:rgb(200,200,200); background:transparent; border:none;"
 
-        self._marker_btn = QPushButton("Поставить")
-        self._marker_btn.setCursor(Qt.PointingHandCursor)
-        self._marker_btn.setStyleSheet(button_style())
-        self._marker_btn.clicked.connect(self._on_marker_btn)
-        lay.addWidget(self._marker_btn)
+        def make_group(keys, font_size=16):
+            group = QWidget()
+            gl = QVBoxLayout(group)
+            gl.setContentsMargins(0, 4, 0, 4)
+            gl.setSpacing(1)
+            for key in keys:
+                lbl = QLabel(f"{key}  \u2014")
+                lbl.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                lbl.setFont(pixel_font(font_size))
+                lbl.setStyleSheet(lbl_style)
+                self._marker_labels[key] = lbl
+                gl.addWidget(lbl)
+            return group
+
+        # Player position
+        lay.addWidget(make_group(["X", "Y", "Z"], 18))
+
+        # Separator
+        sep = QWidget()
+        sep.setFixedHeight(1)
+        sep.setStyleSheet("background:rgba(200,200,200,30);")
+        lay.addSpacing(4)
+        lay.addWidget(sep)
+        lay.addSpacing(4)
+
+        # Body heading
+        lay.addWidget(make_group(["Heading"], 14))
 
         lay.addStretch()
         return page
-
-    def _on_marker_btn(self):
-        s = self._state
-        if s.markers_target is not None:
-            s.markers_target = None
-            self._marker_btn.setText("Поставить")
-        else:
-            if s.markers_pos:
-                s.markers_target = s.markers_pos
-                self._marker_btn.setText("Убрать")
 
     def _build_bots_page(self):
         page = QWidget()
@@ -845,21 +848,11 @@ class MainWindow(QMainWindow):
 
     def _update_markers(self):
         if not self._state.markers_active:
-            if self._marker_arrow.isVisible():
-                self._marker_arrow.hide()
-            if self._marker_world.isVisible():
-                self._marker_world.hide()
             return
 
         s = self._state
         p = s.markers_pos
-        yaw = s.markers_yaw
-        pitch = s.markers_pitch
-        target = s.markers_target
-
-        gr = get_game_rect()
-        if gr:
-            s.game_rect = gr
+        heading = s.markers_yaw
 
         if p:
             self._marker_labels["X"].setText(f"X  {p[0]:.1f}")
@@ -868,42 +861,10 @@ class MainWindow(QMainWindow):
         else:
             for k in ("X", "Y", "Z"):
                 self._marker_labels[k].setText(f"{k}  \u2014")
-        self._marker_labels["Yaw"].setText(f"Yaw  {yaw:.1f}\u00b0" if yaw is not None else "Yaw  \u2014")
-        self._marker_labels["Pitch"].setText(f"Pitch  {pitch:.1f}\u00b0" if pitch is not None else "Pitch  \u2014")
 
-        if target and p and yaw is not None:
-            dx = target[0] - p[0]
-            dy = target[1] - p[1]
-            dz = target[2] - p[2]
-            horiz_dist = math.hypot(dx, dy)
-            dist_3d = math.hypot(horiz_dist, dz)
-            self._marker_labels["Dist"].setText(f"Dist  {dist_3d:.1f}")
-            target_yaw = math.degrees(math.atan2(dx, dy))
-            yaw_delta = (yaw - target_yaw + 180) % 360 - 180
-            target_pitch = math.degrees(math.atan2(dz, horiz_dist)) if horiz_dist > 0.1 else 0.0
-            pitch_delta = target_pitch - (pitch or 0.0)
-            self._marker_arrow.update_arrow(yaw_delta, pitch_delta, dist_3d, gr)
-
-            cp = s.markers_cam_pos
-            cr = s.markers_cam_right
-            cf = s.markers_cam_fwd
-            cu = s.markers_cam_up
-            if gr and cp and cr and cf and cu:
-                proj = w2s(target, cp, cr, cf, cu, gr)
-                if proj:
-                    self._marker_world.update_marker(proj[0], proj[1], proj[2], gr)
-                else:
-                    if self._marker_world.isVisible():
-                        self._marker_world.hide()
-            else:
-                if self._marker_world.isVisible():
-                    self._marker_world.hide()
-        else:
-            self._marker_labels["Dist"].setText("Dist  \u2014")
-            if self._marker_arrow.isVisible():
-                self._marker_arrow.hide()
-            if self._marker_world.isVisible():
-                self._marker_world.hide()
+        self._marker_labels["Heading"].setText(
+            f"Heading  {heading:.1f}\u00b0" if heading is not None else "Heading  \u2014"
+        )
 
     def _update_game_status(self):
         found = is_game_running()
@@ -936,8 +897,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev):
         self._overlay.close()
         self._stash_float.close()
-        self._marker_arrow.close()
-        self._marker_world.close()
         s = self._state
         s.fishing2_active = False
         s.queue_search_active = False

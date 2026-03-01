@@ -12,7 +12,7 @@ user32 = ctypes.windll.user32
 log = logging.getLogger(__name__)
 
 GAME_WINDOW_TITLE = "Majestic Multiplayer"
-_DEFAULT_SERVER_URL = "http://localhost:8000"
+_DEFAULT_SERVER_URL = "https://axiomatic-aryana-hillocky.ngrok-free.dev"
 
 
 def _load_server_url() -> str:

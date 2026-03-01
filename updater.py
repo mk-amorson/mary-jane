@@ -76,11 +76,15 @@ def apply_update(new_exe: str) -> None:
     current = sys.executable
     bat_content = (
         '@echo off\r\n'
+        # Wait for old exe to fully exit and release _MEI temp dir
         ':wait\r\n'
-        'timeout /t 1 /nobreak >nul\r\n'
+        'timeout /t 2 /nobreak >nul\r\n'
         'del /Q "%~1" 2>nul\r\n'
         'if exist "%~1" goto wait\r\n'
+        # Replace with new exe
         'move /Y "%~2" "%~1"\r\n'
+        # Wait for filesystem to settle before launching
+        'timeout /t 2 /nobreak >nul\r\n'
         'start "" "%~1"\r\n'
         'del /Q "%~f0"\r\n'
     )

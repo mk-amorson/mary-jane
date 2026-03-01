@@ -4,13 +4,13 @@
 
 ## Запуск
 
-### Сервер
+### Сервер (быстрый старт)
 
 ```bash
-# 1. FastAPI
-C:\Users\mkamo\AppData\Local\Programs\Python\Python314\python.exe -m uvicorn server.main:app --host 0.0.0.0 --port 8000
+# Вариант 1: двойной клик dev_server.bat (открывает 2 окна: uvicorn + ngrok)
 
-# 2. ngrok (статический домен)
+# Вариант 2: вручную
+C:\Users\mkamo\AppData\Local\Programs\Python\Python314\python.exe -m uvicorn server.main:app --host 0.0.0.0 --port 8000
 C:\Users\mkamo\AppData\Local\ngrok\ngrok.exe http 8000 --url=axiomatic-aryana-hillocky.ngrok-free.dev
 ```
 
@@ -36,7 +36,7 @@ main.py                       — точка входа (asyncio в bg-пото�
 core.py                       — AppState, GameFrameProvider (WGC), SERVER_URL из config.json
 api_client.py                 — aiohttp клиент, JWT auth, auto-refresh + refresh lock
 updater.py                    — проверка/скачивание обновлений через GitHub releases
-version.py                    — __version__ = "1.0.2"
+version.py                    — __version__ = "1.0.3"
 utils.py                      — resource_path() для PyInstaller
 requirements.txt              — клиентские зависимости (pinned)
 config.json                   — JWT токены + server_url + калибровка fishing (в .gitignore)
@@ -86,6 +86,7 @@ icons/                        — SVG/PNG иконки
 reference/                    — PNG-шаблоны для fishing
 sounds/                       — click.mp3
 tools/                        — debug/calibration скрипты (не продакшен)
+dev_server.bat                — быстрый запуск server + ngrok (двойной клик)
 ```
 
 ## Архитектура
@@ -167,3 +168,7 @@ users, modules (5: stash/items/queue free, fishing/sell paid), subscriptions, it
 - Python 3.14, Windows 11
 - Системный python — заглушка MS Store, использовать `AppData\Local\Programs\Python\Python314\python.exe`
 - Secrets в config.json и server/.env — оба в .gitignore
+- `start_*.bat` в .gitignore — dev-скрипты называть иначе (например dev_server.bat)
+- GitHub repo: `mk-amorson/mary-jane`, релизы через `gh release create`
+- Бот @mj_portobot — `/start` автоматически показывает последнюю версию из GitHub Releases
+- ngrok домен: `axiomatic-aryana-hillocky.ngrok-free.dev`
