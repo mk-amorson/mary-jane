@@ -1,3 +1,4 @@
+import os
 import re
 import asyncio
 import logging
@@ -8,8 +9,21 @@ import pytesseract
 from PIL import Image
 
 from core import get_game_rect
+from utils import app_dir
 
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+def _find_tesseract() -> str:
+    """Find tesseract.exe: next to app → Program Files → PATH."""
+    local = os.path.join(app_dir(), "tesseract", "tesseract.exe")
+    if os.path.isfile(local):
+        return local
+    system = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    if os.path.isfile(system):
+        return system
+    return "tesseract"
+
+
+pytesseract.pytesseract.tesseract_cmd = _find_tesseract()
 
 log = logging.getLogger(__name__)
 

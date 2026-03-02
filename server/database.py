@@ -162,7 +162,6 @@ async def get_items(
 ) -> tuple[list[dict], int]:
     params: dict = {
         "is_active": "eq.true",
-        "has_min_price": "eq.true",
         "order": "name.asc",
     }
     if category:

@@ -13,6 +13,7 @@ import asyncio
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QApplication, QStackedWidget, QLineEdit, QSlider,
+    QScrollArea,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
@@ -30,6 +31,7 @@ from ui.overlay import OverlayWindow
 from ui.stash import STASHES, StashTimerWidget, StashFloatWindow
 from ui.queue import QueueETAWidget
 from ui.footer import FooterBar
+from ui.items import ItemsWindow
 
 log = logging.getLogger(__name__)
 
@@ -396,17 +398,48 @@ class MainWindow(QMainWindow):
     def _build_helper_page(self):
         page = QWidget()
         lay = QVBoxLayout(page)
-        lay.setContentsMargins(7, 5, 7, 5)
-        lay.setSpacing(5)
-        for text, slot in [("Очередь", self._open_queue_page),
-                           ("Тайники", lambda: self._go_to(3)),
-                           ("Координаты", lambda: self._go_to(7))]:
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+
+        buttons = [
+            ("Очередь", self._open_queue_page),
+            ("Тайники", lambda: self._go_to(3)),
+            ("Предметы", self._open_items_window),
+            ("Координаты", lambda: self._go_to(7)),
+        ]
+
+        container = QWidget()
+        container.setStyleSheet("background: transparent;")
+        cl = QVBoxLayout(container)
+        cl.setContentsMargins(7, 5, 7, 5)
+        cl.setSpacing(5)
+        for text, slot in buttons:
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(button_style())
             b.clicked.connect(slot)
-            lay.addWidget(b)
-        lay.addStretch()
+            cl.addWidget(b)
+        cl.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidget(container)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setStyleSheet("""
+            QScrollArea { background: transparent; }
+            QScrollBar:vertical {
+                background: rgb(28, 28, 32); width: 6px; border: none;
+                margin: 2px 1px 2px 0;
+            }
+            QScrollBar::handle:vertical {
+                background: rgb(60, 60, 68); border-radius: 3px; min-height: 20px;
+            }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { height: 0; }
+            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
+        """)
+
+        lay.addWidget(scroll, 1)
         return page
 
     def _build_stash_page(self):
@@ -823,6 +856,14 @@ class MainWindow(QMainWindow):
         self._state.queue_search_active = False
         self._go_to(2)
 
+    def _open_items_window(self):
+        if not hasattr(self, "_items_window") or self._items_window is None:
+            self._items_window = ItemsWindow(self._state)
+        self._items_window.show()
+        self._items_window.raise_()
+        self._items_window.activateWindow()
+        self._items_window.load_items()
+
     # ── Tick (1 s) ──
 
     def _on_tick(self):
@@ -897,6 +938,8 @@ class MainWindow(QMainWindow):
     def closeEvent(self, ev):
         self._overlay.close()
         self._stash_float.close()
+        if hasattr(self, "_items_window") and self._items_window is not None:
+            self._items_window.close()
         s = self._state
         s.fishing2_active = False
         s.queue_search_active = False

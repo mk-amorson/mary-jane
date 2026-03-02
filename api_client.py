@@ -117,6 +117,19 @@ class ApiClient:
             "threshold": threshold,
         })
 
+    # ── Items ─────────────────────────────────────────────
+
+    async def get_items(
+        self, category: str | None = None, search: str | None = None,
+        page: int = 1, per_page: int = 100,
+    ) -> dict | None:
+        params: dict = {"page": page, "per_page": per_page}
+        if category:
+            params["category"] = category
+        if search:
+            params["search"] = search
+        return await self._request("GET", "/items", params=params, auth=False)
+
     # ── App Version ────────────────────────────────────────
 
     async def get_app_version(self) -> dict | None:

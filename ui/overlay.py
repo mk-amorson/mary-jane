@@ -14,9 +14,6 @@ _CLICK_THROUGH    = _WS_EX_LAYERED | _WS_EX_TRANSPARENT | _WS_EX_TOOLWINDOW
 
 
 class OverlayWindow(QWidget):
-    _PEN = QPen(QColor(255, 255, 0), 2)
-    _BRUSH = QColor(255, 255, 0, 25)
-
     def __init__(self, state):
         super().__init__()
         self._state = state
@@ -32,23 +29,21 @@ class OverlayWindow(QWidget):
 
     def sync(self):
         s = self._state
-        gr, nr = s.game_rect, s.ocr_number_region
+        gr = s.game_rect
 
-        show_queue = gr and s.queue_search_active and (s.ocr_text_region or nr)
         show_fish2 = gr and (
             (s.fishing2_active and s.fishing2_step in ("cast", "strike", "reel", "end"))
             or (s.fishing2_debug and s.fishing2_bar_rect)
         )
 
-        if show_queue or show_fish2:
+        if show_fish2:
             gx, gy, gw, gh = gr
             geo = self.geometry()
             if geo.x() != gx or geo.y() != gy or geo.width() != gw or geo.height() != gh:
                 self.setGeometry(gx, gy, gw, gh)
             if not self.isVisible():
                 self.show()
-            snap = (gr, s.ocr_text_region, nr, s.queue_position,
-                    s.fishing2_step, s.fishing2_debug,
+            snap = (gr, s.fishing2_step, s.fishing2_debug,
                     s.fishing2_bar_rect,
                     s.fishing2_green_zone,
                     s.fishing2_slider_x, s.fishing2_pred_x,
@@ -66,12 +61,6 @@ class OverlayWindow(QWidget):
     def paintEvent(self, _ev):
         p = QPainter(self)
         p.setRenderHint(QPainter.Antialiasing)
-
-        nr = self._state.ocr_number_region
-        if nr and self._state.queue_search_active:
-            p.setPen(self._PEN)
-            p.setBrush(self._BRUSH)
-            p.drawRect(*nr)
 
         self._paint_fishing2(p)
         p.end()

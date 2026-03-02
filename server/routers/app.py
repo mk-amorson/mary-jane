@@ -39,10 +39,11 @@ async def get_latest_release() -> dict | None:
         data = r.json()
         version = data["tag_name"].lstrip("v")
 
-        # Find .exe asset
+        # Find main .exe asset (skip Setup installer)
         download_url = ""
         for asset in data.get("assets", []):
-            if asset["name"].endswith(".exe"):
+            name = asset["name"]
+            if name.endswith(".exe") and "setup" not in name.lower():
                 download_url = asset["browser_download_url"]
                 break
 
