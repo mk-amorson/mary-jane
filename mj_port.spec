@@ -29,6 +29,7 @@ a = Analysis(
         'win32api',
         'win32con',
         'pymem',
+        'vgamepad',
     ],
     hookspath=[],
     hooksconfig={},
