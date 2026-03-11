@@ -10,16 +10,15 @@ import time
 import cv2
 import numpy as np
 
-import ctypes
-from core import get_game_rect, GAME_WINDOW_TITLE
+from core import ensure_capture
 from .detection import (
     tmpl_match, detect_bubbles,
     track_green, track_slider, track_slider_bounds,
     GREEN_BAR_TMPL, BOBBER_TMPL, TAKE_TMPL,
 )
 from .trackers import SliderTracker
-from .memory import GTA5Memory, HeadingTracker
-from .input import tap_key, key_down, key_up, click_at, set_hwnd, gamepad_release, SC_SPACE, SC_A, SC_D
+from modules.memory import GTA5Memory, HeadingTracker
+from modules.input import tap_key, key_down, key_up, click_at, set_hwnd, gamepad_release, SC_SPACE, SC_A, SC_D
 from .regions import take_region
 
 log = logging.getLogger(__name__)
@@ -548,13 +547,7 @@ async def fishing2_bot_loop(state):
         # First activation
         if state.fishing2_step == "idle":
             _t0 = time.monotonic()
-            # Set target window for PostMessage input
-            hwnd = ctypes.windll.user32.FindWindowW(None, GAME_WINDOW_TITLE)
-            if hwnd:
-                set_hwnd(hwnd)
-                log.info("Input target HWND: %s", hwnd)
-            else:
-                log.warning("Game window not found — input will fail")
+            await ensure_capture(state)
             saved = _load_bar_rect()
             if saved:
                 state.fishing2_bar_rect = saved
@@ -564,14 +557,6 @@ async def fishing2_bot_loop(state):
                     log.info("Memory reader connected (v2)")
                 else:
                     log.warning("Memory reader unavailable — v2 requires memory for reel")
-
-        if not state.frame_provider.running:
-            state.frame_provider.start()
-            for _ in range(20):
-                await asyncio.sleep(0.1)
-                if state.frame_provider.get_image() is not None:
-                    break
-        state.game_rect = get_game_rect()
 
         if state.fishing2_step == "idle":
             state.fishing2_step = "cast"

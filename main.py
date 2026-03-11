@@ -11,6 +11,7 @@ from licensing import check_activation, try_revalidate
 from modules.queue import queue_monitor_loop
 from modules.fishing import fishing2_bot_loop
 from modules.markers import markers_loop
+from modules.toilet import toilet_bot_loop
 from ui.window import MainWindow
 
 logging.basicConfig(
@@ -30,6 +31,7 @@ def run_async_loop(state):
 
     loop.create_task(queue_monitor_loop(state))
     loop.create_task(fishing2_bot_loop(state))
+    loop.create_task(toilet_bot_loop(state))
     loop.create_task(markers_loop(state))
     loop.run_forever()
 

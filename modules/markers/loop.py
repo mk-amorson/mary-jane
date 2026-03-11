@@ -3,7 +3,7 @@ import math
 import asyncio
 import logging
 
-from modules.fishing.memory import GTA5Memory
+from modules.memory import GTA5Memory
 
 log = logging.getLogger(__name__)
 

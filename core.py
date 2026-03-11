@@ -131,6 +131,31 @@ class GameFrameProvider:
         return None
 
 
+async def ensure_capture(state, set_input_hwnd=True):
+    """Find game HWND, start frame provider, wait for first frame.
+
+    Used by fishing and toilet bots to avoid duplicating startup logic.
+    Returns HWND or 0 if game not found.
+    """
+    hwnd = user32.FindWindowW(None, GAME_WINDOW_TITLE)
+    if hwnd and set_input_hwnd:
+        from modules.input import set_hwnd
+        set_hwnd(hwnd)
+        log.info("Input target HWND: %s", hwnd)
+    elif not hwnd:
+        log.warning("Game window not found")
+
+    if not state.frame_provider.running:
+        state.frame_provider.start()
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            if state.frame_provider.get_image() is not None:
+                break
+
+    state.game_rect = get_game_rect()
+    return hwnd
+
+
 class AppState:
     def __init__(self):
         self.loop: asyncio.AbstractEventLoop | None = None
@@ -186,3 +211,10 @@ class AppState:
         self.markers_cam_fwd: tuple | None = None   # (x,y,z) camera forward from viewport+0x60
         self.markers_cam_up: tuple | None = None    # (x,y,z) camera up from viewport+0x70
         self.markers_target: tuple | None = None    # (x, y, z) saved marker
+        # Toilet bot
+        self.toilet_active: bool = False
+        self.toilet_step: str = "idle"              # idle / search / scrub / done
+        self.toilet_rect: tuple | None = None       # (x,y,w,h) found toilet
+        self.toilet_jorshik: tuple | None = None    # (cx,cy) brush center
+        self.toilet_cursor: tuple | None = None     # (cx,cy) current drag position
+        self.toilet_path: list | None = None        # zigzag path segments

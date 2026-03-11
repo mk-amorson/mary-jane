@@ -17,6 +17,9 @@ log = logging.getLogger(__name__)
 # Gumroad product — set when product is created on Gumroad
 GUMROAD_PRODUCT_ID = ""
 
+# Dev key — bypasses Gumroad, activates locally
+DEV_KEY = "MJ-DEV-2026"
+
 # Offline tolerance: app works without internet for this many days
 GRACE_PERIOD_DAYS = 30
 # Re-validate license online every N days
@@ -117,6 +120,20 @@ def check_activation() -> bool:
 def activate(license_key: str) -> tuple[bool, str]:
     """Validate key online, bind to hardware, store in config."""
     hw_id = get_hardware_id()
+
+    # Dev key — skip Gumroad, activate locally
+    if license_key.strip() == DEV_KEY:
+        cfg = _load_config()
+        cfg["activation"] = {
+            "license_key": license_key.strip(),
+            "hardware_id": hw_id,
+            "activated_at": time.time(),
+            "last_verified": time.time(),
+        }
+        _save_config(cfg)
+        log.info("Dev license activated")
+        return True, "Активация успешна (dev)"
+
     result = _validate_online(license_key)
     if result is None:
         return False, "Неверный ключ или ошибка сети"
@@ -138,6 +155,8 @@ def try_revalidate():
     cfg = _load_config()
     act = cfg.get("activation")
     if not act or not act.get("license_key"):
+        return
+    if act.get("license_key") == DEV_KEY:
         return
     days_since = (time.time() - act.get("last_verified", 0)) / 86400
     if days_since < REVALIDATION_DAYS:

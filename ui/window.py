@@ -38,7 +38,7 @@ class MainWindow(QMainWindow):
     _sig_update_progress = pyqtSignal(float, str)
     _sig_update_result = pyqtSignal(str)
 
-    _BACK = {1: "_close_queue_page", 2: 0, 3: 2, 4: 0, 5: 4, 6: 0, 7: 2}
+    _BACK = {1: "_close_queue_page", 2: 0, 3: 2, 4: 0, 5: 4, 6: 0, 7: 2, 8: 4}
 
     def __init__(self, state):
         super().__init__()
@@ -76,6 +76,7 @@ class MainWindow(QMainWindow):
         self._stack.addWidget(self._build_fishing2_page())   # 5
         self._stack.addWidget(self._build_settings_page())   # 6
         self._stack.addWidget(self._build_markers_page())    # 7
+        self._stack.addWidget(self._build_toilet_page())    # 8
 
         root.addWidget(self._build_footer())
 
@@ -87,6 +88,9 @@ class MainWindow(QMainWindow):
 
         self._fish2_timer = QTimer(self)
         self._fish2_timer.timeout.connect(self._on_fish2_tick)
+
+        self._toilet_timer = QTimer(self)
+        self._toilet_timer.timeout.connect(self._on_toilet_tick)
 
         self._game_found = False
         self._drag_pos = None
@@ -494,7 +498,7 @@ class MainWindow(QMainWindow):
         lay.setContentsMargins(7, 5, 7, 5)
         lay.setSpacing(5)
 
-        for text, page_idx in [("Рыбалка", 5)]:
+        for text, page_idx in [("Рыбалка", 5), ("Туалет", 8)]:
             b = QPushButton(text)
             b.setCursor(Qt.PointingHandCursor)
             b.setStyleSheet(button_style())
@@ -556,6 +560,68 @@ class MainWindow(QMainWindow):
         self._fish2_btn.clicked.connect(self._toggle_fishing2)
         lay.addWidget(self._fish2_btn)
         return page
+
+    def _build_toilet_page(self):
+        page = QWidget()
+        lay = QVBoxLayout(page)
+        lay.setContentsMargins(7, 5, 7, 5)
+        lay.setSpacing(5)
+
+        self._toilet_status = QLabel("Остановлен")
+        self._toilet_status.setAlignment(Qt.AlignCenter)
+        self._toilet_status.setFont(app_font(27))
+        self._toilet_status.setStyleSheet("color:rgb(200,200,200);")
+        lay.addWidget(self._toilet_status, 1)
+
+        self._toilet_btn = QPushButton("Старт")
+        self._toilet_btn.setCursor(Qt.PointingHandCursor)
+        self._toilet_btn.setStyleSheet(button_style())
+        self._toilet_btn.clicked.connect(self._toggle_toilet)
+        lay.addWidget(self._toilet_btn)
+        return page
+
+    def _toggle_toilet(self):
+        s = self._state
+        if hasattr(self, '_toilet_countdown') and self._toilet_countdown > 0:
+            self._toilet_countdown = 0
+            self._toilet_cd_timer.stop()
+            self._toilet_btn.setText("Старт")
+            self._toilet_status.setText("Остановлен")
+            return
+        if s.toilet_active:
+            s.toilet_active = False
+            self._toilet_btn.setText("Старт")
+            self._toilet_status.setText("Остановлен")
+            self._toilet_timer.stop()
+        else:
+            self._toilet_countdown = 3
+            self._toilet_btn.setText("Стоп")
+            self._toilet_status.setText("3")
+            if not hasattr(self, '_toilet_cd_timer'):
+                self._toilet_cd_timer = QTimer(self)
+                self._toilet_cd_timer.timeout.connect(self._on_toilet_countdown)
+            self._toilet_cd_timer.start(1000)
+
+    def _on_toilet_countdown(self):
+        self._toilet_countdown -= 1
+        if self._toilet_countdown > 0:
+            self._toilet_status.setText(str(self._toilet_countdown))
+        else:
+            self._toilet_cd_timer.stop()
+            self._state.toilet_active = True
+            self._toilet_status.setText("Поиск...")
+            self._toilet_timer.start(33)
+
+    def _on_toilet_tick(self):
+        s = self._state
+        step = s.toilet_step
+        if step == "search":
+            self._toilet_status.setText("Поиск...")
+        elif step == "scrub":
+            self._toilet_status.setText("Чистим!")
+        elif step == "done":
+            self._toilet_status.setText("Готово")
+        self._overlay.sync()
 
     def _on_fish2_slider(self, val):
         self._fish2_slider_label.setText(f"{val} мс")
@@ -808,6 +874,7 @@ class MainWindow(QMainWindow):
             self._items_window.close()
         s = self._state
         s.fishing2_active = False
+        s.toilet_active = False
         s.queue_search_active = False
         if s.frame_provider.running:
             s.frame_provider.stop()

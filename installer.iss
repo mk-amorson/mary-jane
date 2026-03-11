@@ -22,7 +22,7 @@ Compression=lzma2/ultra64
 SolidCompression=yes
 SetupIconFile=assets\icons\app.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
-PrivilegesRequired=lowest
+PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=force
 RestartApplications=no
@@ -43,13 +43,27 @@ Source: "dist\tesseract\*.dll"; DestDir: "{app}\tesseract"; Flags: ignoreversion
 Source: "dist\tesseract\tessdata\eng.traineddata"; DestDir: "{app}\tesseract\tessdata"; Flags: ignoreversion
 Source: "dist\tesseract\tessdata\rus.traineddata"; DestDir: "{app}\tesseract\tessdata"; Flags: ignoreversion
 
+; ViGEmBus driver installer
+Source: "dist\vigem\ViGEmBusSetup_x64.msi"; DestDir: "{tmp}"; Flags: ignoreversion deleteafterinstall
+
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Run]
+; Install ViGEmBus driver silently (skip if already installed)
+Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\ViGEmBusSetup_x64.msi"" /quiet /norestart"; StatusMsg: "Установка ViGEmBus драйвера..."; Flags: runhidden waituntilterminated; Check: not IsViGEmInstalled
+; Launch app
 Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+function IsViGEmInstalled: Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := RegKeyExists(HKLM, 'SYSTEM\CurrentControlSet\Services\ViGEmBus');
+end;
 
 [UninstallDelete]
 Type: files; Name: "{app}\config.json"

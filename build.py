@@ -93,7 +93,23 @@ def main():
     ) / (1024 * 1024)
     print(f"  Tesseract total: {tess_size:.1f} MB")
 
-    # 4. Build installer
+    # 4. Copy ViGEmBus installer
+    step("Copying ViGEmBus driver installer")
+    vigem_dest = os.path.join(DIST, "vigem")
+    os.makedirs(vigem_dest, exist_ok=True)
+    try:
+        import vgamepad
+        vgamepad_dir = os.path.dirname(vgamepad.__file__)
+        vigem_msi = os.path.join(vgamepad_dir, "win", "vigem", "install", "x64", "ViGEmBusSetup_x64.msi")
+        if os.path.isfile(vigem_msi):
+            shutil.copy2(vigem_msi, vigem_dest)
+            print(f"  Copied ViGEmBusSetup_x64.msi")
+        else:
+            print(f"  WARNING: {vigem_msi} not found")
+    except ImportError:
+        print("  WARNING: vgamepad not installed, skipping ViGEmBus")
+
+    # 5. Build installer
     step("Building installer with Inno Setup")
     iscc = find_iscc()
     if iscc is None:

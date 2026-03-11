@@ -11,7 +11,11 @@ import ctypes
 import logging
 import time
 
-import vgamepad as vg
+try:
+    import vgamepad as vg
+    _HAS_VGAMEPAD = True
+except Exception:
+    _HAS_VGAMEPAD = False
 
 log = logging.getLogger(__name__)
 
@@ -66,14 +70,21 @@ def _make_key_lparam(scan_code: int, *, up: bool = False) -> int:
 
 # ── Virtual gamepad (ViGEmBus) for held directions ──
 
-_gamepad: vg.VX360Gamepad | None = None
+_gamepad = None
 
 
-def _ensure_gamepad() -> vg.VX360Gamepad:
+def _ensure_gamepad():
     global _gamepad
     if _gamepad is None:
-        _gamepad = vg.VX360Gamepad()
-        log.info("Virtual gamepad created")
+        if not _HAS_VGAMEPAD:
+            log.warning("vgamepad not available — install ViGEmBus for background reel")
+            return None
+        try:
+            _gamepad = vg.VX360Gamepad()
+            log.info("Virtual gamepad created")
+        except Exception as e:
+            log.warning("Failed to create virtual gamepad (ViGEmBus installed?): %s", e)
+            return None
     return _gamepad
 
 
@@ -85,8 +96,10 @@ def gamepad_release():
 
 
 def key_down(scan_code: int):
-    """Hold direction via virtual gamepad left stick (inverted for fishing)."""
+    """Hold direction via virtual gamepad left stick."""
     pad = _ensure_gamepad()
+    if pad is None:
+        return
     if scan_code == SC_A:
         pad.left_joystick_float(-1.0, 0.0)
     elif scan_code == SC_D:
@@ -99,6 +112,8 @@ def key_down(scan_code: int):
 def key_up(scan_code: int):
     """Release virtual gamepad stick."""
     pad = _ensure_gamepad()
+    if pad is None:
+        return
     pad.left_joystick_float(0.0, 0.0)
     pad.update()
 
@@ -140,3 +155,106 @@ def click_at(client_x: int, client_y: int):
     user32.PostMessageW(_hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
     time.sleep(0.03)
     user32.PostMessageW(_hwnd, WM_LBUTTONUP, 0, lparam)
+
+
+# ── Mouse drag via PostMessage (no physical cursor movement) ──
+
+def mouse_down_at(client_x: int, client_y: int):
+    """Press left button at position (no release)."""
+    lparam = (client_y << 16) | (client_x & 0xFFFF)
+    user32.PostMessageW(_hwnd, WM_MOUSEMOVE, 0, lparam)
+    time.sleep(0.01)
+    user32.PostMessageW(_hwnd, WM_LBUTTONDOWN, MK_LBUTTON, lparam)
+
+
+def mouse_move_at(client_x: int, client_y: int):
+    """Move mouse while button held (drag)."""
+    lparam = (client_y << 16) | (client_x & 0xFFFF)
+    user32.PostMessageW(_hwnd, WM_MOUSEMOVE, MK_LBUTTON, lparam)
+
+
+def mouse_up_at(client_x: int, client_y: int):
+    """Release left button."""
+    lparam = (client_y << 16) | (client_x & 0xFFFF)
+    user32.PostMessageW(_hwnd, WM_LBUTTONUP, 0, lparam)
+
+
+# ── Mouse drag via SendInput (moves physical cursor, works with all games) ──
+
+class _INPUT_MOUSE(ctypes.Structure):
+    _fields_ = [
+        ("dx", ctypes.c_long),
+        ("dy", ctypes.c_long),
+        ("mouseData", ctypes.c_ulong),
+        ("dwFlags", ctypes.c_ulong),
+        ("time", ctypes.c_ulong),
+        ("dwExtraInfo", ctypes.POINTER(ctypes.c_ulong)),
+    ]
+
+
+class _INPUT(ctypes.Structure):
+    class _U(ctypes.Union):
+        _fields_ = [("mi", _INPUT_MOUSE)]
+    _fields_ = [
+        ("type", ctypes.c_ulong),
+        ("u", _U),
+    ]
+
+
+_INPUT_MOUSE_TYPE = 0
+_MOUSEEVENTF_MOVE = 0x0001
+_MOUSEEVENTF_LEFTDOWN = 0x0002
+_MOUSEEVENTF_LEFTUP = 0x0004
+_MOUSEEVENTF_ABSOLUTE = 0x8000
+
+_SM_CXSCREEN = 0
+_SM_CYSCREEN = 1
+
+
+def _screen_size():
+    # SM_CXVIRTUALSCREEN / SM_CYVIRTUALSCREEN for multi-monitor
+    cx = user32.GetSystemMetrics(78)  # SM_CXVIRTUALSCREEN
+    cy = user32.GetSystemMetrics(79)  # SM_CYVIRTUALSCREEN
+    if cx == 0 or cy == 0:
+        cx = user32.GetSystemMetrics(_SM_CXSCREEN)
+        cy = user32.GetSystemMetrics(_SM_CYSCREEN)
+    return cx, cy
+
+
+def _to_absolute(screen_x, screen_y):
+    """Convert screen pixel coords to SendInput absolute coords (0–65535)."""
+    # Use virtual screen offset for multi-monitor
+    vx = user32.GetSystemMetrics(76)  # SM_XVIRTUALSCREEN
+    vy = user32.GetSystemMetrics(77)  # SM_YVIRTUALSCREEN
+    cx, cy = _screen_size()
+    ax = int((screen_x - vx) * 65535 / cx)
+    ay = int((screen_y - vy) * 65535 / cy)
+    return ax, ay
+
+
+def _send_mouse_input(flags, screen_x, screen_y):
+    ax, ay = _to_absolute(screen_x, screen_y)
+    inp = _INPUT()
+    inp.type = _INPUT_MOUSE_TYPE
+    inp.u.mi.dx = ax
+    inp.u.mi.dy = ay
+    inp.u.mi.dwFlags = flags | _MOUSEEVENTF_ABSOLUTE
+    inp.u.mi.time = 0
+    inp.u.mi.mouseData = 0
+    inp.u.mi.dwExtraInfo = ctypes.pointer(ctypes.c_ulong(0))
+    user32.SendInput(1, ctypes.byref(inp), ctypes.sizeof(inp))
+
+
+def si_mouse_down(screen_x: int, screen_y: int):
+    """SendInput: move cursor + press left button (screen coords)."""
+    _send_mouse_input(_MOUSEEVENTF_MOVE | _MOUSEEVENTF_LEFTDOWN, screen_x, screen_y)
+
+
+def si_mouse_move(screen_x: int, screen_y: int):
+    """SendInput: move cursor (screen coords). Use while button held for drag."""
+    _send_mouse_input(_MOUSEEVENTF_MOVE, screen_x, screen_y)
+
+
+def si_mouse_up(screen_x: int, screen_y: int):
+    """SendInput: release left button (screen coords)."""
+    _send_mouse_input(_MOUSEEVENTF_MOVE | _MOUSEEVENTF_LEFTUP, screen_x, screen_y)

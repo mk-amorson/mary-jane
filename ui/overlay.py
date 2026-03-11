@@ -35,8 +35,9 @@ class OverlayWindow(QWidget):
             (s.fishing2_active and s.fishing2_step in ("cast", "strike", "reel", "end"))
             or (s.fishing2_debug and s.fishing2_bar_rect)
         )
+        show_toilet = gr and s.toilet_active and s.toilet_step in ("search", "scrub", "done")
 
-        if show_fish2:
+        if show_fish2 or show_toilet:
             gx, gy, gw, gh = gr
             geo = self.geometry()
             if geo.x() != gx or geo.y() != gy or geo.width() != gw or geo.height() != gh:
@@ -50,7 +51,9 @@ class OverlayWindow(QWidget):
                     s.fishing2_slider_bounds,
                     s.fishing2_bobber_rect,
                     s.fishing2_bubbles, s.fishing2_camera_dir,
-                    s.fishing2_take_icon)
+                    s.fishing2_take_icon,
+                    s.toilet_step, s.toilet_rect, s.toilet_jorshik,
+                    s.toilet_cursor)
             if snap != self._snap:
                 self._snap = snap
                 self.update()
@@ -63,6 +66,7 @@ class OverlayWindow(QWidget):
         p.setRenderHint(QPainter.Antialiasing)
 
         self._paint_fishing2(p)
+        self._paint_toilet(p)
         p.end()
 
     def _paint_fishing2(self, p: QPainter):
@@ -122,3 +126,52 @@ class OverlayWindow(QWidget):
                 p.setPen(QPen(QColor(255, 220, 50), 2))
                 p.setBrush(QColor(255, 220, 50, 30))
                 p.drawRect(tx, ty, tw, th)
+
+    def _paint_toilet(self, p: QPainter):
+        s = self._state
+        if not s.toilet_active or s.toilet_step == "idle":
+            return
+
+        # Toilet boundary — cyan rect
+        tr = s.toilet_rect
+        if tr:
+            tx, ty, tw, th = tr
+            p.setPen(QPen(QColor(0, 220, 255), 2))
+            p.setBrush(QColor(0, 220, 255, 15))
+            p.drawRect(tx, ty, tw, th)
+
+            # Inner cleaning area — dashed
+            mx = int(tw * 0.18)
+            mt = int(th * 0.18)
+            mb = int(th * 0.12)
+            pen = QPen(QColor(0, 220, 255, 100), 1, Qt.DashLine)
+            p.setPen(pen)
+            p.setBrush(Qt.NoBrush)
+            p.drawRect(tx + mx, ty + mt, tw - 2 * mx, th - mt - mb)
+
+        # Jorshik position — green cross
+        j = s.toilet_jorshik
+        if j:
+            jx, jy = j
+            p.setPen(QPen(QColor(80, 255, 80), 2))
+            p.drawLine(jx - 12, jy, jx + 12, jy)
+            p.drawLine(jx, jy - 12, jx, jy + 12)
+
+        # Zigzag path — dim lines
+        path = s.toilet_path
+        if path:
+            p.setPen(QPen(QColor(255, 255, 255, 40), 1))
+            for sx, sy, ex, ey, _dur in path:
+                p.drawLine(sx, sy, ex, ey)
+
+        # Current cursor — bright orange dot
+        cur = s.toilet_cursor
+        if cur:
+            cx, cy = cur
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor(255, 140, 0))
+            p.drawEllipse(cx - 6, cy - 6, 12, 12)
+            # Outer ring
+            p.setPen(QPen(QColor(255, 140, 0, 120), 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawEllipse(cx - 10, cy - 10, 20, 20)
