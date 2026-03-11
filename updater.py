@@ -83,34 +83,21 @@ def download_update_sync(url: str, dest: str, progress_cb=None) -> bool:
         return False
 
 
-def apply_update(new_exe: str) -> None:
-    """Write update.bat, launch it, exit current process."""
+def apply_update(installer_path: str) -> None:
+    """Run downloaded installer silently, exit current process.
+
+    Inno Setup with /VERYSILENT will:
+    - Close the running app (CloseApplications=force)
+    - Replace all files
+    - Relaunch the app (postinstall Run entry)
+    """
     if not getattr(sys, 'frozen', False):
         log.error("Cannot apply update: not running as frozen .exe")
         return
 
-    current = sys.executable
-    bat_content = (
-        '@echo off\r\n'
-        # Wait for old exe to fully exit and release _MEI temp dir
-        ':wait\r\n'
-        'timeout /t 2 /nobreak >nul\r\n'
-        'del /Q "%~1" 2>nul\r\n'
-        'if exist "%~1" goto wait\r\n'
-        # Replace with new exe
-        'move /Y "%~2" "%~1"\r\n'
-        # Wait for filesystem to settle before launching
-        'timeout /t 2 /nobreak >nul\r\n'
-        'start "" "%~1"\r\n'
-        'del /Q "%~f0"\r\n'
-    )
-
-    bat_path = os.path.join(os.path.dirname(current), "update.bat")
-    with open(bat_path, 'w') as f:
-        f.write(bat_content)
-
+    log.info("Launching installer: %s", installer_path)
     subprocess.Popen(
-        ['cmd', '/c', bat_path, current, new_exe],
+        [installer_path, '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART'],
         creationflags=subprocess.CREATE_NO_WINDOW,
     )
     sys.exit(0)

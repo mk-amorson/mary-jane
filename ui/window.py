@@ -243,7 +243,7 @@ class MainWindow(QMainWindow):
 
         version = info.get("version", "?")
         self._sig_update_progress.emit(0.0, f"загрузка {version}...")
-        dest = os.path.join(os.path.dirname(sys.executable), "Mary Jane_new.exe")
+        dest = os.path.join(os.path.dirname(sys.executable), "Mary Jane_update.exe")
 
         def on_progress(pct):
             p = int(pct * 100)

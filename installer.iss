@@ -55,7 +55,7 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 ; Install ViGEmBus driver silently (skip if already installed)
 Filename: "msiexec.exe"; Parameters: "/i ""{tmp}\ViGEmBusSetup_x64.msi"" /quiet /norestart"; StatusMsg: "Установка ViGEmBus драйвера..."; Flags: runhidden waituntilterminated; Check: not IsViGEmInstalled
 ; Launch app
-Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "{cm:LaunchProgram,{#MyAppName}}"; Flags: nowait postinstall
 
 [Code]
 function IsViGEmInstalled: Boolean;
